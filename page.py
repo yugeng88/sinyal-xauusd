@@ -1,0 +1,167 @@
+"""Halaman dasbor (otomatis dari index.html). Disematkan agar ikut ter-bundle di hosting serverless."""
+HTML = r'''<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e1a">
+<title>Sinyal XAUUSD</title>
+<style>
+:root{
+  --bg:#0b0e1a; --panel:#12162a; --line:#232a47; --text:#eef0f8; --mute:#8b93b3;
+  --buy:#4ade80; --sell:#f87171; --wait:#fbbf24; --accent:#e8845f;
+  --font:"Inter","Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);
+  padding:max(16px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom));
+  display:flex;justify-content:center;
+  background-image:radial-gradient(900px 400px at 85% -10%,#2a1a2e55,transparent),
+                   radial-gradient(700px 400px at 0% 100%,#16225255,transparent)}
+main{width:100%;max-width:460px;display:grid;gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+h1{font-size:22px;font-weight:700;letter-spacing:.2px}
+.sub{color:var(--mute);font-size:13px;margin-top:4px}
+.badge{font-weight:700;font-size:14px;padding:6px 14px;border-radius:8px;border:1.5px solid currentColor}
+.BUY{color:var(--buy)} .SELL{color:var(--sell)} .WAIT{color:var(--wait)}
+.price{font-size:30px;font-weight:700;margin-top:10px;font-variant-numeric:tabular-nums}
+.chart{margin-top:10px}
+svg{width:100%;height:auto;display:block}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--mute);justify-content:center;margin-top:6px;flex-wrap:wrap}
+.legend i{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.cell{padding:12px 14px;border-bottom:1px solid var(--line)}
+.cell:nth-child(odd){border-right:1px solid var(--line)}
+.cell:nth-last-child(-n+2){border-bottom:0}
+.cell small{display:block;color:var(--mute);font-size:12px;margin-bottom:4px}
+.cell b{font-size:18px;font-variant-numeric:tabular-nums}
+.tp{color:var(--buy)} .sl{color:var(--sell)}
+.bar{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:8px 0 6px}
+.bar>div{height:100%;background:var(--accent);border-radius:4px;transition:width .6s}
+.row{display:flex;justify-content:space-between;font-size:13px}
+.note{color:var(--mute);font-size:12px;line-height:1.5}
+h2{font-size:15px;margin-bottom:8px}
+.summary{font-size:14px;line-height:1.65;color:#d6daee}
+.warn{margin-top:8px;font-size:13px;color:var(--wait)}
+.ind{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.ind div{font-size:12px;color:var(--mute)} .ind b{display:block;color:var(--text);font-size:15px;margin-top:2px}
+.status{font-size:12px;color:var(--mute);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--buy);margin-right:6px}
+.dot.stale{background:var(--wait)} .dot.err{background:var(--sell)}
+.error{border-color:#6b2a2a;background:#2a1417;color:#fecaca;font-size:13px;line-height:1.5}
+.hist{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.hist td,.hist th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+.hist th{color:var(--mute);font-weight:500}
+.empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
+.disc{text-align:center;color:var(--mute);font-size:12px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <div id="err" class="card error" hidden></div>
+  <section class="card" id="main">
+    <div class="empty" id="loading">Mengambil data pasar…</div>
+  </section>
+  <section class="card" id="sumcard" hidden>
+    <h2>Ringkasan teknikal</h2>
+    <p class="summary" id="summary"></p>
+    <p class="warn" id="warn" hidden></p>
+  </section>
+  <section class="card" id="indcard" hidden>
+    <h2>Indikator</h2>
+    <div class="ind" id="ind"></div>
+  </section>
+  <section class="card" id="histcard" hidden>
+    <h2>Riwayat sinyal</h2>
+    <table class="hist"><thead><tr><th>Candle (UTC)</th><th>Sinyal</th><th>Harga</th><th>Skor</th></tr></thead>
+    <tbody id="hist"></tbody></table>
+  </section>
+  <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.</p>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = (n, d=2) => n == null ? "–" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let last = null;
+
+function chartSVG(sig){
+  const pts = sig.chart, L = sig.levels;
+  const W=420,H=190,pl=6,pr=52,pt=8,pb=8;
+  let vals = pts.map(p=>p.c);
+  if(L){ vals = vals.concat([L.entry, L.stop_loss, ...L.tp]); }
+  let lo=Math.min(...vals), hi=Math.max(...vals), pad=(hi-lo)*.06||1; lo-=pad; hi+=pad;
+  const x=i=>pl+i*(W-pl-pr)/(pts.length-1), y=v=>pt+(hi-v)*(H-pt-pb)/(hi-lo);
+  const path = pts.map((p,i)=>(i?"L":"M")+x(i).toFixed(1)+" "+y(p.c).toFixed(1)).join("");
+  let g = `<path d="${path}" fill="none" stroke="#c9cfee" stroke-width="1.6" stroke-linejoin="round"/>`;
+  const line=(v,c,l,dash)=>`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="${c}" stroke-width="1" ${dash?'stroke-dasharray="4 3"':''}/>
+    <text x="${W-pr+4}" y="${y(v)+3.5}" fill="${c}" font-size="10">${l}</text>`;
+  if(L){
+    g += line(L.entry,"#8b93b3","Entry",true) + line(L.stop_loss,"#f87171","SL",true);
+    L.tp.forEach((v,i)=>{ g += line(v,"#4ade80","TP"+(i+1),true); });
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafik harga penutupan H1 48 candle terakhir">${g}</svg>`;
+}
+
+function render(s){
+  const sig = s.signal;
+  $("err").hidden = !s.error;
+  if(s.error) $("err").textContent = "Data belum bisa diambil: " + s.error + (sig ? " (menampilkan sinyal terakhir yang berhasil)" : "");
+  if(!sig){ $("loading").textContent = s.error ? "Belum ada data. Aplikasi mencoba lagi otomatis." : "Server baru bangun, mengambil data pasar (sekitar 1 menit)…"; return; }
+  const L = sig.levels, d = sig.direction;
+  const cells = L ? `
+    <div class="cell"><small>Entry</small><b>${fmt(L.entry)}</b></div>
+    <div class="cell"><small>Stop loss</small><b class="sl">${fmt(L.stop_loss)}</b></div>
+    <div class="cell"><small>Take profit 1 · RR 1:${L.rr[0]}</small><b class="tp">${fmt(L.tp[0])}</b></div>
+    <div class="cell"><small>Take profit 2 · RR 1:${L.rr[1]}</small><b class="tp">${fmt(L.tp[1])}</b></div>
+    <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fmt(L.tp[2])}</b></div>
+    <div class="cell"><small>Jarak risiko</small><b>${fmt(L.risk_points)}</b></div>` : "";
+  $("main").innerHTML = `
+    <div class="top"><div><h1>XAUUSD</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
+    <span class="badge ${d}">${d==="WAIT"?"TUNGGU":d}</span></div>
+    <div class="price">${fmt(sig.price)}</div>
+    <div class="chart">${chartSVG(sig)}</div>
+    ${L?`<div class="legend"><span><i style="background:#8b93b3"></i>Entry</span><span><i style="background:#f87171"></i>Stop loss</span><span><i style="background:#4ade80"></i>Take profit</span></div>`:""}
+    ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">Belum ada setup yang cukup selaras. Tidak ada level entry saat ini.</p>`}
+    <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan</span><b>${sig.confidence}%</b></div>
+    <div class="bar" role="progressbar" aria-valuenow="${sig.confidence}" aria-valuemin="0" aria-valuemax="100"><div style="width:${sig.confidence}%"></div></div>
+    <p class="note">Keselarasan indikator (skor ${sig.score>0?"+":""}${sig.score} dari ±${sig.max_score}), bukan peluang profit.</p></div>`;
+  $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
+  $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
+  const i = sig.indicators;
+  $("ind").innerHTML = [["EMA 20",fmt(i.ema20)],["EMA 50",fmt(i.ema50)],["EMA 100",fmt(i.ema100)],
+    ["RSI 14",fmt(i.rsi14,1)],["ATR 14",fmt(i.atr14)],["24 jam",i.change_24h_pct==null?"–":(i.change_24h_pct>0?"+":"")+fmt(i.change_24h_pct)+"%"]]
+    .map(([a,b])=>`<div>${a}<b>${b}</b></div>`).join("");
+  $("indcard").hidden = false;
+  $("src").textContent = "Sumber: " + sig.source;
+}
+
+function tick(){
+  if(!last) return;
+  const dot=$("dot"), age = last.updated_at ? Math.round((new Date(last.now) - new Date(last.updated_at))/60000 + (Date.now()-lastFetch)/60000) : null;
+  const stale = age!=null && age > last.update_minutes*3;
+  dot.className = "dot" + (last.error ? " err" : stale ? " stale" : "");
+  $("stat").textContent = age==null ? "menunggu data pertama" :
+    `diperbarui ${age<1?"baru saja":age+" menit lalu"} · otomatis tiap ${last.update_minutes} menit` + (stale?" · data mungkin basi":"");
+}
+
+let lastFetch = Date.now();
+async function load(){
+  try{
+    const r = await fetch("/api/signal",{cache:"no-store"}); last = await r.json(); lastFetch = Date.now(); render(last);
+    const h = await (await fetch("/api/history",{cache:"no-store"})).json();
+    $("histcard").hidden = !h.length;
+    $("hist").innerHTML = h.slice(0,10).map(x=>`<tr><td>${esc(x.candle_time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.price)}</td><td>${x.score>0?"+":""}${x.score}</td></tr>`).join("");
+  }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
+  tick();
+}
+async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 30000 : 5000); }
+cycle(); setInterval(tick, 15000);
+</script>
+</body>
+</html>
+'''

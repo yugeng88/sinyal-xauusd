@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; sinyal-xauusd/1.0)"}
-TIMEOUT = 20
+TIMEOUT = 8
 
 
 class DataError(Exception):

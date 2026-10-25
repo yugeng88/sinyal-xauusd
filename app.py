@@ -9,20 +9,22 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import requests
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, Response, jsonify
 
 import data
+import page
 import signals
 
 UPDATE_MINUTES = max(int(os.getenv("UPDATE_MINUTES", "15")), 1)
-HISTORY_FILE = os.getenv("HISTORY_FILE", "history.jsonl")
+HISTORY_FILE = os.getenv("HISTORY_FILE",
+                         "/tmp/history.jsonl" if os.getenv("VERCEL") else "history.jsonl")
 PORT = int(os.getenv("PORT", "8000"))
 
-BASE = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=None)
 state = {"signal": None, "summary": None, "updated_at": None,
          "error": None, "last_attempt": None}
 lock = threading.Lock()
+refresh_busy = threading.Lock()
 narrative_cache = {}
 
 
@@ -85,6 +87,15 @@ def log_history(sig):
 
 def refresh():
     """Satu siklus: ambil data nyata -> hitung -> simpan. Galat disimpan apa adanya."""
+    if not refresh_busy.acquire(blocking=False):
+        return  # siklus lain sedang berjalan
+    try:
+        _refresh()
+    finally:
+        refresh_busy.release()
+
+
+def _refresh():
     with lock:
         state["last_attempt"] = now().isoformat()
     try:
@@ -121,8 +132,19 @@ def loop():
         time.sleep(UPDATE_MINUTES * 60)
 
 
+def ensure_fresh():
+    """Mode serverless: hitung ulang hanya bila data sudah lebih tua dari interval.
+    Galat dicoba lagi lebih cepat (1 menit)."""
+    with lock:
+        la, err = state["last_attempt"], state["error"]
+    gap = timedelta(minutes=1 if err else UPDATE_MINUTES)
+    if la is None or now() - datetime.fromisoformat(la) > gap:
+        refresh()
+
+
 @app.get("/api/signal")
 def api_signal():
+    ensure_fresh()
     with lock:
         s = dict(state)
     nxt = None
@@ -149,7 +171,7 @@ def healthz():
 
 @app.get("/")
 def index():
-    return send_from_directory(BASE, "index.html")
+    return Response(page.HTML, mimetype="text/html")
 
 
 def start_background():
