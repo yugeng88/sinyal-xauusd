@@ -5,7 +5,7 @@ HTML = r'''<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0e1a">
-<title>Sinyal XAUUSD</title>
+<title>Sinyal XAUUSD & NASDAQ</title>
 <style>
 :root{
   --bg:#0b0e1a; --panel:#12162a; --line:#232a47; --text:#eef0f8; --mute:#8b93b3;
@@ -53,6 +53,11 @@ h2{font-size:15px;margin-bottom:8px}
 .hist{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
 .hist td,.hist th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
 .hist th{color:var(--mute);font-weight:500}
+.tabs{display:flex;gap:8px}
+.tab{flex:1;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:11px 8px;font:600 14px var(--font);cursor:pointer}
+.tab[aria-selected="true"]{color:var(--text);border-color:var(--accent);background:#1a1d33}
+.note-box{margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--wait);border:1px solid #5b4a1a;background:#2a2412;border-radius:8px;padding:8px 10px}
+.CLOSED{color:var(--mute)}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -61,6 +66,10 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 </head>
 <body>
 <main>
+  <div class="tabs" role="tablist" aria-label="Pilih instrumen">
+    <button class="tab" role="tab" id="tab-XAUUSD" data-sym="XAUUSD">XAUUSD</button>
+    <button class="tab" role="tab" id="tab-NASDAQ" data-sym="NASDAQ">NASDAQ</button>
+  </div>
   <div id="err" class="card error" hidden></div>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
@@ -88,6 +97,10 @@ const $ = id => document.getElementById(id);
 const fmt = (n, d=2) => n == null ? "–" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let last = null;
+const SYMS = ["XAUUSD","NASDAQ"];
+let cur = (location.hash.replace("#","").toUpperCase());
+if(!SYMS.includes(cur)) cur = "XAUUSD";
+let seq = 0;
 
 function chartSVG(sig){
   const pts = sig.chart, L = sig.levels;
@@ -104,7 +117,7 @@ function chartSVG(sig){
     g += line(L.entry,"#8b93b3","Entry",true) + line(L.stop_loss,"#f87171","SL",true);
     L.tp.forEach((v,i)=>{ g += line(v,"#4ade80","TP"+(i+1),true); });
   }
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafik harga penutupan H1 48 candle terakhir">${g}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafik harga penutupan H1, 48 candle terakhir">${g}</svg>`;
 }
 
 function render(s){
@@ -112,7 +125,8 @@ function render(s){
   $("err").hidden = !s.error;
   if(s.error) $("err").textContent = "Data belum bisa diambil: " + s.error + (sig ? " (menampilkan sinyal terakhir yang berhasil)" : "");
   if(!sig){ $("loading").textContent = s.error ? "Belum ada data. Aplikasi mencoba lagi otomatis." : "Server baru bangun, mengambil data pasar (sekitar 1 menit)…"; return; }
-  const L = sig.levels, d = sig.direction;
+  const L = sig.levels, d = sig.direction, closed = !!sig.market_closed;
+  const badgeCls = closed ? "CLOSED" : d, badgeTxt = closed ? "TUTUP" : (d==="WAIT" ? "TUNGGU" : d);
   const cells = L ? `
     <div class="cell"><small>Entry</small><b>${fmt(L.entry)}</b></div>
     <div class="cell"><small>Stop loss</small><b class="sl">${fmt(L.stop_loss)}</b></div>
@@ -121,12 +135,13 @@ function render(s){
     <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fmt(L.tp[2])}</b></div>
     <div class="cell"><small>Jarak risiko</small><b>${fmt(L.risk_points)}</b></div>` : "";
   $("main").innerHTML = `
-    <div class="top"><div><h1>XAUUSD</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
-    <span class="badge ${d}">${d==="WAIT"?"TUNGGU":d}</span></div>
+    <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
+    <span class="badge ${badgeCls}">${badgeTxt}</span></div>
     <div class="price">${fmt(sig.price)}</div>
+    ${sig.note?`<div class="note-box">${esc(sig.note)}</div>`:""}
     <div class="chart">${chartSVG(sig)}</div>
     ${L?`<div class="legend"><span><i style="background:#8b93b3"></i>Entry</span><span><i style="background:#f87171"></i>Stop loss</span><span><i style="background:#4ade80"></i>Take profit</span></div>`:""}
-    ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">Belum ada setup yang cukup selaras. Tidak ada level entry saat ini.</p>`}
+    ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">${closed?"Pasar tampaknya tutup.":"Belum ada setup yang cukup selaras."} Tidak ada level entry saat ini.</p>`}
     <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan</span><b>${sig.confidence}%</b></div>
     <div class="bar" role="progressbar" aria-valuenow="${sig.confidence}" aria-valuemin="0" aria-valuemax="100"><div style="width:${sig.confidence}%"></div></div>
     <p class="note">Keselarasan indikator (skor ${sig.score>0?"+":""}${sig.score} dari ±${sig.max_score}), bukan peluang profit.</p></div>`;
@@ -140,6 +155,17 @@ function render(s){
   $("src").textContent = "Sumber: " + sig.source;
 }
 
+function setTab(sym){
+  cur = sym; seq++; last = null;
+  history.replaceState(null,"","#"+sym.toLowerCase());
+  document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===sym));
+  $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>';
+  ["sumcard","indcard","histcard"].forEach(i=>$(i).hidden=true);
+  $("err").hidden = true; $("src").textContent = ""; $("stat").textContent = "menghubungkan…";
+  load();
+}
+document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setTab(b.dataset.sym)));
+
 function tick(){
   if(!last) return;
   const dot=$("dot"), age = last.updated_at ? Math.round((new Date(last.now) - new Date(last.updated_at))/60000 + (Date.now()-lastFetch)/60000) : null;
@@ -151,15 +177,20 @@ function tick(){
 
 let lastFetch = Date.now();
 async function load(){
+  const my = seq, sym = cur;
   try{
-    const r = await fetch("/api/signal",{cache:"no-store"}); last = await r.json(); lastFetch = Date.now(); render(last);
-    const h = await (await fetch("/api/history",{cache:"no-store"})).json();
+    const r = await fetch("/api/signal?symbol="+sym,{cache:"no-store"}); const j = await r.json();
+    if(my!==seq) return;               // pengguna sudah pindah tab
+    last = j; lastFetch = Date.now(); render(last);
+    const h = await (await fetch("/api/history?symbol="+sym,{cache:"no-store"})).json();
+    if(my!==seq) return;
     $("histcard").hidden = !h.length;
     $("hist").innerHTML = h.slice(0,10).map(x=>`<tr><td>${esc(x.candle_time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.price)}</td><td>${x.score>0?"+":""}${x.score}</td></tr>`).join("");
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
 }
 async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 30000 : 5000); }
+document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
 cycle(); setInterval(tick, 15000);
 </script>
 </body>

@@ -1,14 +1,46 @@
-"""Pengambil data harga XAUUSD (candle H1) dari sumber nyata.
+"""Pengambil data harga candle H1 dari sumber nyata untuk beberapa instrumen.
 
 Aturan: tidak pernah membuat data palsu. Jika semua sumber gagal,
-fungsi melempar DataError dan aplikasi menampilkan pesan galat.
+get_candles() melempar DataError dan aplikasi menampilkan pesan galat.
+Bila yang terpakai adalah pengganti (proxy) dari instrumen asli, catatannya
+dikembalikan dan ditampilkan di dasbor.
 """
 import os
+import time
+
 import pandas as pd
 import requests
 
-UA = {"User-Agent": "Mozilla/5.0 (compatible; sinyal-xauusd/1.0)"}
-TIMEOUT = 8
+UA = {"User-Agent": "Mozilla/5.0 (compatible; sinyal-trading/2.0)"}
+TIMEOUT = 8        # detik per permintaan
+BUDGET = 25        # detik total per siklus pengambilan data
+
+NOTE_GC = "Futures emas (GC=F): harga bisa berbeda dari spot XAUUSD."
+NOTE_QQQ = ("Memakai ETF QQQ (pelacak Nasdaq-100): harga dalam USD per unit ETF, "
+            "BUKAN poin indeks NAS100/US100. Jangan pakai level ini langsung untuk CFD.")
+NOTE_NQ = ("Memakai futures Nasdaq-100 (NQ=F): harga bisa berbeda dari "
+           "indeks atau CFD NAS100/US100.")
+
+# (penyedia, simbol, catatan bila ini pengganti). Dicoba berurutan.
+SYMBOLS = {
+    "XAUUSD": {
+        "label": "XAUUSD",
+        "candidates": [
+            ("td", "XAU/USD", None),
+            ("yahoo", "XAUUSD=X", None),
+            ("yahoo", "GC=F", NOTE_GC),
+        ],
+    },
+    "NASDAQ": {
+        "label": "NASDAQ 100",
+        "candidates": [
+            ("td", "NDX", None),
+            ("yahoo", "^NDX", None),
+            ("td", "QQQ", NOTE_QQQ),
+            ("yahoo", "NQ=F", NOTE_NQ),
+        ],
+    },
+}
 
 
 class DataError(Exception):
@@ -24,7 +56,7 @@ def _frame(rows):
     return df.reset_index(drop=True)
 
 
-def fetch_twelvedata(api_key, symbol="XAU/USD", interval="1h", size=500):
+def fetch_twelvedata(api_key, symbol, interval="1h", size=500):
     r = requests.get(
         "https://api.twelvedata.com/time_series",
         params={"symbol": symbol, "interval": interval, "outputsize": size,
@@ -33,7 +65,7 @@ def fetch_twelvedata(api_key, symbol="XAU/USD", interval="1h", size=500):
     )
     j = r.json()
     if j.get("status") == "error" or "values" not in j:
-        raise DataError(f"Twelve Data: {j.get('message', 'respons tidak valid')}")
+        raise DataError(f"Twelve Data {symbol}: {j.get('message', 'respons tidak valid')}")
     rows = [(v["datetime"], v["open"], v["high"], v["low"], v["close"])
             for v in j["values"]]
     return _frame(rows), f"Twelve Data {symbol}"
@@ -60,27 +92,28 @@ def fetch_yahoo(symbol, interval="60m", rng="60d"):
     return _frame(rows), f"Yahoo Finance {symbol}"
 
 
-def get_candles():
-    """Kembalikan (DataFrame candle H1, nama sumber). Urutan coba:
-    1) Twelve Data bila TWELVEDATA_API_KEY diisi (disarankan, spot XAU/USD)
-    2) Yahoo XAUUSD=X, lalu GC=F (futures emas; harganya bisa beda dari spot)
-    """
+def get_candles(key):
+    """Kembalikan (DataFrame candle H1, nama sumber, catatan atau None)."""
+    cfg = SYMBOLS.get(key)
+    if cfg is None:
+        raise DataError(f"Instrumen tidak dikenal: {key}")
+    td_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
+    start = time.monotonic()
     errors = []
-    key = os.getenv("TWELVEDATA_API_KEY", "").strip()
-    if key:
+    for provider, sym, note in cfg["candidates"]:
+        if time.monotonic() - start > BUDGET:
+            errors.append("waktu habis, sumber berikutnya dilewati")
+            break
         try:
-            return fetch_twelvedata(key)
-        except Exception as e:  # noqa: BLE001
-            errors.append(str(e))
-    for sym in os.getenv("YAHOO_SYMBOLS", "XAUUSD=X,GC=F").split(","):
-        sym = sym.strip()
-        if not sym:
-            continue
-        try:
-            df, src = fetch_yahoo(sym)
+            if provider == "td":
+                if not td_key:
+                    continue
+                df, src = fetch_twelvedata(td_key, sym)
+            else:
+                df, src = fetch_yahoo(sym)
             if len(df) >= 150:
-                return df, src
-            errors.append(f"Yahoo {sym}: candle terlalu sedikit ({len(df)})")
+                return df, src, note
+            errors.append(f"{src}: candle terlalu sedikit ({len(df)})")
         except Exception as e:  # noqa: BLE001
             errors.append(str(e))
     raise DataError(" | ".join(errors) or "Semua sumber data gagal")

@@ -5,6 +5,8 @@ import pandas as pd
 ATR_MULT = float(os.getenv("ATR_MULT", "1.5"))   # jarak SL = ATR x ini
 RR_LEVELS = (2.0, 3.0, 4.0)                       # TP1, TP2, TP3
 MAX_SCORE = 5
+STALE_HOURS = float(os.getenv("STALE_HOURS", "3"))   # lebih tua dari ini = pasar dianggap tutup
+SPIKE_PCT = float(os.getenv("SPIKE_PCT", "2.0"))      # lonjakan 1 candle H1 yang dianggap mencurigakan
 
 
 def ema(s, n):
@@ -37,7 +39,17 @@ def change_24h(df):
     return (last["close"] / base - 1) * 100
 
 
-def analyze(df, source="", chart_bars=48):
+def max_hourly_move_pct(df, bars=48):
+    """Pergerakan terbesar antar candle berurutan (celah antar sesi diabaikan)."""
+    t = df.tail(bars + 1)
+    chg = t["close"].pct_change().abs() * 100
+    contiguous = t["time"].diff() <= pd.Timedelta(hours=2)
+    vals = chg[contiguous]
+    return float(vals.max()) if len(vals) else 0.0
+
+
+def analyze(df, source="", symbol="XAUUSD", label=None, note=None,
+            chart_bars=48, now=None):
     if len(df) < 120:
         raise ValueError(f"Candle kurang ({len(df)}); butuh minimal 120")
     c = df["close"]
@@ -95,6 +107,20 @@ def analyze(df, source="", chart_bars=48):
         conf = max(conf - 10, 0)
         warnings.append("RSI oversold: risiko pantulan, pertimbangkan entry bertahap")
 
+    now = now or pd.Timestamp.now(tz="UTC")
+    age_h = (now - df.iloc[-1]["time"]).total_seconds() / 3600
+    market_closed = age_h > STALE_HOURS
+    if market_closed:
+        direction, conf = "WAIT", 0
+        warnings.clear()
+        warnings.append( f"Pasar tampaknya tutup: candle terakhir {age_h:.0f} jam lalu "
+                           f"({df.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M')} UTC). "
+                           "Tidak ada level entry sampai ada candle baru.")
+    spike = max_hourly_move_pct(df)
+    if spike > SPIKE_PCT:
+        warnings.append(f"Ada lonjakan {spike:.1f}% dalam satu candle H1 pada 48 candle terakhir. "
+                        "Periksa apakah datanya benar sebelum memakai sinyal.")
+
     levels = None
     if direction != "WAIT":
         sign = 1 if direction == "BUY" else -1
@@ -110,9 +136,12 @@ def analyze(df, source="", chart_bars=48):
 
     tail = df.tail(chart_bars)
     return {
-        "symbol": "XAUUSD",
+        "symbol": symbol,
+        "label": label or symbol,
         "timeframe": "H1",
         "source": source,
+        "note": note,
+        "market_closed": market_closed,
         "candle_time": df.iloc[-1]["time"].isoformat(),
         "direction": direction,
         "score": score,
@@ -137,8 +166,8 @@ def summary_text(sig):
     d = sig["direction"]
     head = {"BUY": "Sinyal BUY.", "SELL": "Sinyal SELL.",
             "WAIT": "Belum ada setup jelas, sebaiknya menunggu."}[d]
+    if sig.get("market_closed"):
+        head = "Pasar tampaknya tutup, tidak ada sinyal baru."
     body = " ".join(r.split(" (skor")[0] + "." for r in sig["reasons"])
     tail = f" Skor indikator {sig['score']:+d} dari ±{sig['max_score']}."
-    if sig["warnings"]:
-        tail += " Catatan: " + "; ".join(sig["warnings"]) + "."
     return f"{head} {body}{tail}"
