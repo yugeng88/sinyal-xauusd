@@ -48,8 +48,21 @@ def max_hourly_move_pct(df, bars=48):
     return float(vals.max()) if len(vals) else 0.0
 
 
+def split_closed(df, now):
+    """Pisahkan candle yang sudah tertutup dari candle H1 yang masih berjalan."""
+    last = df.iloc[-1]
+    if last["time"] + pd.Timedelta(hours=1) > now:
+        return df.iloc[:-1], last
+    return df, None
+
+
 def analyze(df, source="", symbol="XAUUSD", label=None, note=None,
-            chart_bars=48, now=None):
+            chart_bars=48, now=None, closed_only=True):
+    now = now or pd.Timestamp.now(tz="UTC")
+    full = df
+    live_price = float(full["close"].iloc[-1])
+    if closed_only:
+        df, _ = split_closed(full, now)   # indikator hanya dari candle tertutup
     if len(df) < 120:
         raise ValueError(f"Candle kurang ({len(df)}); butuh minimal 120")
     c = df["close"]
@@ -107,14 +120,13 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None,
         conf = max(conf - 10, 0)
         warnings.append("RSI oversold: risiko pantulan, pertimbangkan entry bertahap")
 
-    now = now or pd.Timestamp.now(tz="UTC")
-    age_h = (now - df.iloc[-1]["time"]).total_seconds() / 3600
+    age_h = (now - full.iloc[-1]["time"]).total_seconds() / 3600
     market_closed = age_h > STALE_HOURS
     if market_closed:
         direction, conf = "WAIT", 0
         warnings.clear()
         warnings.append( f"Pasar tampaknya tutup: candle terakhir {age_h:.0f} jam lalu "
-                           f"({df.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M')} UTC). "
+                           f"({full.iloc[-1]['time'].strftime('%Y-%m-%d %H:%M')} UTC). "
                            "Tidak ada level entry sampai ada candle baru.")
     spike = max_hourly_move_pct(df)
     if spike > SPIKE_PCT:
@@ -148,6 +160,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None,
         "max_score": MAX_SCORE,
         "confidence": conf,
         "price": round(price, 2),
+        "live_price": round(live_price, 2),
         "indicators": {
             "ema20": round(v20, 2), "ema50": round(v50, 2), "ema100": round(v100, 2),
             "rsi14": round(rsi_v, 1), "atr14": round(atr_v, 2),
@@ -171,3 +184,100 @@ def summary_text(sig):
     body = " ".join(r.split(" (skor")[0] + "." for r in sig["reasons"])
     tail = f" Skor indikator {sig['score']:+d} dari ±{sig['max_score']}."
     return f"{head} {body}{tail}"
+
+
+# ---------------------------------------------------------------------------
+# Pelacakan sinyal: sekali terbit, sinyal TIDAK hilang hanya karena indikator
+# berubah. Level dikunci saat terbit dan sinyal berakhir bila: SL tersentuh,
+# TP3 tercapai, lewat EXPIRY_HOURS, atau muncul sinyal arah berlawanan.
+# Semua dihitung ulang dari data candle nyata, tanpa penyimpanan di server.
+# ---------------------------------------------------------------------------
+EXPIRY_HOURS = float(os.getenv("EXPIRY_HOURS", "12"))
+TRACK_BARS = int(os.getenv("TRACK_BARS", "48"))
+
+
+def _issue_at(df, i):
+    s = analyze(df.iloc[:i + 1], now=df.iloc[i]["time"], closed_only=False)
+    return s["direction"], s["levels"], s["confidence"]
+
+
+def _hits(direction, lv, high, low):
+    """(SL tersentuh?, jumlah TP tersentuh) pada satu candle."""
+    if direction == "BUY":
+        return low <= lv["stop_loss"], sum(1 for t in lv["tp"] if high >= t)
+    return high >= lv["stop_loss"], sum(1 for t in lv["tp"] if low <= t)
+
+
+def track(df, window=TRACK_BARS, expiry_hours=EXPIRY_HOURS, now=None, issue_fn=None):
+    """Kembalikan {"active": sinyal berjalan atau None, "recent": riwayat terbaru}.
+
+    Sinyal hanya diterbitkan dari candle TERTUTUP. Candle yang masih berjalan
+    dipakai hanya untuk mengecek apakah SL/TP sudah tersentuh.
+    Bila SL dan TP tersentuh dalam candle yang sama, SL dianggap lebih dulu
+    (asumsi konservatif karena urutan di dalam candle tidak diketahui).
+    """
+    now = now or pd.Timestamp.now(tz="UTC")
+    closed, forming = split_closed(df, now)
+    issue_fn = issue_fn or (lambda i: _issue_at(closed, i))
+    n = len(closed)
+    start = max(119, n - window)
+    cur, done = None, []
+
+    def finish(outcome):
+        nonlocal cur
+        done.append({**{k: cur[k] for k in ("direction", "time", "levels", "confidence", "tp_hit")},
+                     "outcome": outcome})
+        cur = None
+
+    for i in range(start, n):
+        row = closed.iloc[i]
+        d, lv, conf = issue_fn(i)
+        if cur is not None and i > cur["idx"]:
+            sl, tps = _hits(cur["direction"], cur["levels"], row["high"], row["low"])
+            if sl:
+                finish("SL")
+            else:
+                cur["tp_hit"] = max(cur["tp_hit"], tps)
+                if cur["tp_hit"] >= 3:
+                    finish("TP3")
+                elif (row["time"] - cur["time"]).total_seconds() / 3600 >= expiry_hours:
+                    finish("EXPIRED")
+                elif d in ("BUY", "SELL") and d != cur["direction"]:
+                    finish("REVERSED")
+        if cur is None and d in ("BUY", "SELL") and lv:
+            cur = {"idx": i, "time": row["time"], "direction": d, "levels": lv,
+                   "confidence": conf, "tp_hit": 0}
+
+    if cur is not None and forming is not None:        # cek SL/TP pada candle berjalan
+        sl, tps = _hits(cur["direction"], cur["levels"], forming["high"], forming["low"])
+        if sl:
+            finish("SL")
+        else:
+            cur["tp_hit"] = max(cur["tp_hit"], tps)
+            if cur["tp_hit"] >= 3:
+                finish("TP3")
+
+    last_time = df.iloc[-1]["time"]
+    market_closed = (now - last_time).total_seconds() / 3600 > STALE_HOURS
+    live = float(df["close"].iloc[-1])
+    active = None
+    if cur is not None:
+        age_h = (now - cur["time"]).total_seconds() / 3600
+        if age_h >= expiry_hours:
+            finish("EXPIRED")
+        elif market_closed:
+            done.append({**{k: cur[k] for k in ("direction", "time", "levels", "confidence", "tp_hit")},
+                         "outcome": "OPEN"})
+        else:
+            sign = 1 if cur["direction"] == "BUY" else -1
+            active = {"direction": cur["direction"], "time": cur["time"].isoformat(),
+                      "levels": cur["levels"], "confidence": cur["confidence"],
+                      "tp_hit": cur["tp_hit"], "age_hours": round(age_h, 1),
+                      "expires_in_hours": round(expiry_hours - age_h, 1),
+                      "live_price": round(live, 2),
+                      "move_points": round((live - cur["levels"]["entry"]) * sign, 2)}
+    recent = [{"time": r["time"].isoformat(), "direction": r["direction"],
+               "entry": r["levels"]["entry"], "stop_loss": r["levels"]["stop_loss"],
+               "tp": r["levels"]["tp"], "confidence": r["confidence"],
+               "tp_hit": r["tp_hit"], "outcome": r["outcome"]} for r in done][::-1][:10]
+    return {"active": active, "recent": recent, "expiry_hours": expiry_hours}

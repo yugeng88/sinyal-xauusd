@@ -66,6 +66,8 @@ h2{font-size:15px;margin-bottom:8px}
 .bgrid small{display:block;color:var(--mute);font-size:11.5px;margin-bottom:3px}
 .bgrid b{font-size:16px;font-variant-numeric:tabular-nums}
 .bgrid i{display:block;font-style:normal;color:var(--mute);font-size:11.5px;margin-top:2px}
+.status-box{margin-top:10px;font-size:13px;line-height:1.55;border:1px solid #2c3a66;background:#141a33;border-radius:8px;padding:9px 11px}
+.status-box .mute{color:var(--mute)} .status-box .warnline{color:var(--wait)}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -98,12 +100,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <div class="ind" id="ind"></div>
   </section>
   <section class="card" id="histcard" hidden>
-    <h2>Riwayat sinyal</h2>
-    <table class="hist"><thead><tr><th>Candle (UTC)</th><th>Sinyal</th><th>Harga</th><th>Skor</th></tr></thead>
+    <h2>Riwayat sinyal (dihitung ulang dari data candle)</h2>
+    <table class="hist"><thead><tr><th>Terbit (UTC)</th><th>Arah</th><th>Entry</th><th>Hasil</th></tr></thead>
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 3 · XAUUSD + NASDAQ + kartu harga broker</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 4 · sinyal bertahan sampai SL, TP3, atau kedaluwarsa</p>
 </main>
 
 <script>
@@ -116,8 +118,14 @@ let cur = (location.hash.replace("#","").toUpperCase());
 if(!SYMS.includes(cur)) cur = "XAUUSD";
 let seq = 0;
 
+function activeOf(sig){ return sig && sig.tracking ? sig.tracking.active : null; }
+function levelsOf(sig){ const A = activeOf(sig); return sig && sig.tracking ? (A ? A.levels : null) : (sig && sig.levels); }
+const OUT = {SL:"Kena SL", TP3:"TP3 tercapai", EXPIRED:"Kedaluwarsa", REVERSED:"Berbalik arah", OPEN:"Pasar tutup", ACTIVE:"Aktif"};
+function outText(o, tp){ let t = OUT[o] || o; if(tp>0 && (o==="SL"||o==="EXPIRED"||o==="REVERSED"||o==="ACTIVE"||o==="OPEN")) t += " · TP"+tp+" tercapai"; return t; }
+function ageText(h){ return h<1 ? "kurang dari 1 jam" : (Math.round(h*10)/10)+" jam"; }
+
 function chartSVG(sig){
-  const pts = sig.chart, L = sig.levels;
+  const pts = sig.chart, L = levelsOf(sig);
   const W=420,H=190,pl=6,pr=52,pt=8,pb=8;
   let vals = pts.map(p=>p.c);
   if(L){ vals = vals.concat([L.entry, L.stop_loss, ...L.tp]); }
@@ -139,8 +147,21 @@ function render(s){
   $("err").hidden = !s.error;
   if(s.error) $("err").textContent = "Data belum bisa diambil: " + s.error + (sig ? " (menampilkan sinyal terakhir yang berhasil)" : "");
   if(!sig){ $("loading").textContent = s.error ? "Belum ada data. Aplikasi mencoba lagi otomatis." : "Server baru bangun, mengambil data pasar (sekitar 1 menit)…"; return; }
-  const L = sig.levels, d = sig.direction, closed = !!sig.market_closed;
-  const badgeCls = closed ? "CLOSED" : d, badgeTxt = closed ? "TUTUP" : (d==="WAIT" ? "TUNGGU" : d);
+  const A = activeOf(sig), L = levelsOf(sig), closed = !!sig.market_closed;
+  const d = A ? A.direction : sig.direction;
+  const badgeCls = closed ? "CLOSED" : d, badgeTxt = closed ? "TUTUP" : (A ? d : (d==="WAIT" ? "TUNGGU" : d));
+  const conf = A ? A.confidence : sig.confidence;
+  const live = sig.live_price ?? sig.price;
+  let status = "";
+  if(A){
+    const mv = A.move_points, R = A.levels.risk_points;
+    const tpTxt = A.tp_hit>0 ? "TP"+A.tp_hit+" sudah tercapai" : "belum ada TP tercapai";
+    status = `<div class="status-box"><b>Sinyal ${A.direction} aktif</b>, terbit ${ageText(A.age_hours)} lalu. Level dikunci saat terbit.<br>
+      Harga sekarang ${fmt(live)} (${mv>0?"+":""}${fmt(mv)} poin dari entry) · ${tpTxt}.<br>
+      Berlaku sampai SL, TP3, atau sekitar ${Math.max(0,Math.round(A.expires_in_hours))} jam lagi.
+      ${sig.direction!==A.direction && !closed ? `<br><span class="mute">Indikator saat ini: ${sig.direction==="WAIT"?"TUNGGU":sig.direction} (skor ${sig.score>0?"+":""}${sig.score}). Sinyal tetap berlaku sampai berakhir.</span>`:""}
+      ${mv>R ? `<br><span class="warnline">Harga sudah bergerak lebih dari 1R dari entry. Masuk sekarang berarti RR lebih kecil dari yang tertera.</span>`:""}</div>`;
+  }
   const cells = L ? `
     <div class="cell"><small>Entry</small><b>${fmt(L.entry)}</b></div>
     <div class="cell"><small>Stop loss</small><b class="sl">${fmt(L.stop_loss)}</b></div>
@@ -149,16 +170,17 @@ function render(s){
     <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fmt(L.tp[2])}</b></div>
     <div class="cell"><small>Jarak risiko</small><b>${fmt(L.risk_points)}</b></div>` : "";
   $("main").innerHTML = `
-    <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
+    <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle tertutup ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
     <span class="badge ${badgeCls}">${badgeTxt}</span></div>
-    <div class="price">${fmt(sig.price)}</div>
+    <div class="price">${fmt(live)}</div>
+    ${status}
     ${sig.note?`<div class="note-box">${esc(sig.note)}</div>`:""}
     <div class="chart">${chartSVG(sig)}</div>
     ${L?`<div class="legend"><span><i style="background:#8b93b3"></i>Entry</span><span><i style="background:#f87171"></i>Stop loss</span><span><i style="background:#4ade80"></i>Take profit</span></div>`:""}
     ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">${closed?"Pasar tampaknya tutup.":"Belum ada setup yang cukup selaras."} Tidak ada level entry saat ini.</p>`}
-    <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan</span><b>${sig.confidence}%</b></div>
-    <div class="bar" role="progressbar" aria-valuenow="${sig.confidence}" aria-valuemin="0" aria-valuemax="100"><div style="width:${sig.confidence}%"></div></div>
-    <p class="note">Keselarasan indikator (skor ${sig.score>0?"+":""}${sig.score} dari ±${sig.max_score}), bukan peluang profit.</p></div>`;
+    <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan${A?" (saat terbit)":""}</span><b>${conf}%</b></div>
+    <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
+    <p class="note">Keselarasan indikator${A?"":" (skor "+(sig.score>0?"+":"")+sig.score+" dari ±"+sig.max_score+")"}, bukan peluang profit.</p></div>`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;
@@ -184,19 +206,20 @@ function parsePrice(raw, ref){
 }
 function updateBroker(){
   const card=$("brokercard"), out=$("bout");
-  const sig = last && last.signal, L = sig && sig.levels;
+  const sig = last && last.signal, L = levelsOf(sig);
   if(!sig){ card.hidden = true; return; }
+  const ref = sig.live_price ?? sig.price;
   card.hidden = false;
   if(!L){
     out.innerHTML = '<p class="note">Belum ada level untuk dihitung ulang ('+(sig.market_closed?"pasar tampaknya tutup":"belum ada sinyal BUY atau SELL")+'). Kartu ini menghitung otomatis begitu sinyal BUY atau SELL muncul.</p>';
     return;
   }
-  const raw = $("bp").value, p = parsePrice(raw, sig.price);
+  const raw = $("bp").value, p = parsePrice(raw, ref);
   if(!raw.trim()){ out.innerHTML=""; return; }
   if(p==null){ out.innerHTML='<p class="note" style="color:var(--sell)">Angka belum terbaca. Contoh: 29011.91</p>'; return; }
   const sl = L.stop_loss - L.entry, tp = L.tp.map(x=>x-L.entry);
   const sg = v => (v>0?"+":"")+fmt(v);
-  const gap = Math.abs(p/sig.price-1)*100;
+  const gap = Math.abs(p/ref-1)*100;
   out.innerHTML = `
     <div class="bgrid">
       <div><small>Entry (harga broker)</small><b>${fmt(p)}</b></div>
@@ -204,7 +227,7 @@ function updateBroker(){
       <div><small>Take profit 1</small><b class="tp">${fmt(p+tp[0])}</b><i>${sg(tp[0])} poin</i></div>
       <div><small>Take profit 2</small><b class="tp">${fmt(p+tp[1])}</b><i>${sg(tp[1])} poin</i></div>
       <div><small>Take profit 3</small><b class="tp">${fmt(p+tp[2])}</b><i>${sg(tp[2])} poin</i></div>
-      <div><small>Selisih ke harga aplikasi</small><b>${fmt(p-sig.price)}</b><i>${gap.toFixed(2)}%</i></div>
+      <div><small>Selisih ke harga aplikasi</small><b>${fmt(p-ref)}</b><i>${gap.toFixed(2)}%</i></div>
     </div>
     ${gap>0.5?'<p class="warn">Harga broker berbeda cukup jauh dari harga acuan sinyal ('+gap.toFixed(2)+'%). Sinyal mungkin sudah tidak relevan, atau angkanya salah ketik.</p>':""}`;
 }
@@ -232,16 +255,21 @@ function tick(){
 }
 
 let lastFetch = Date.now();
+function renderHistory(sig){
+  const tr = sig && sig.tracking, A = activeOf(sig);
+  const rows = [];
+  if(A) rows.push({time:A.time, direction:A.direction, entry:A.levels.entry, outcome:"ACTIVE", tp_hit:A.tp_hit});
+  if(tr) rows.push(...tr.recent);
+  $("histcard").hidden = !rows.length;
+  $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
+}
 async function load(){
   const my = seq, sym = cur;
   try{
     const r = await fetch("/api/signal?symbol="+sym,{cache:"no-store"}); const j = await r.json();
     if(my!==seq) return;               // pengguna sudah pindah tab
     last = j; lastFetch = Date.now(); render(last);
-    const h = await (await fetch("/api/history?symbol="+sym,{cache:"no-store"})).json();
-    if(my!==seq) return;
-    $("histcard").hidden = !h.length;
-    $("hist").innerHTML = h.slice(0,10).map(x=>`<tr><td>${esc(x.candle_time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.price)}</td><td>${x.score>0?"+":""}${x.score}</td></tr>`).join("");
+    renderHistory(j.signal);
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
 }

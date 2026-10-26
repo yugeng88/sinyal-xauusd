@@ -114,6 +114,7 @@ def _refresh(sym):
         df, source, note = data.get_candles(sym)
         sig = signals.analyze(df, source, symbol=sym,
                               label=data.SYMBOLS[sym]["label"], note=note)
+        sig["tracking"] = signals.track(df)
     except Exception as e:  # noqa: BLE001
         with lock:
             st["error"] = f"{type(e).__name__}: {e}"
