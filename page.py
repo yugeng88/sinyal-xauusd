@@ -103,7 +103,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 3 · XAUUSD + NASDAQ + kartu harga broker</p>
 </main>
 
 <script>
@@ -185,8 +185,12 @@ function parsePrice(raw, ref){
 function updateBroker(){
   const card=$("brokercard"), out=$("bout");
   const sig = last && last.signal, L = sig && sig.levels;
-  if(!L){ card.hidden = true; return; }
+  if(!sig){ card.hidden = true; return; }
   card.hidden = false;
+  if(!L){
+    out.innerHTML = '<p class="note">Belum ada level untuk dihitung ulang ('+(sig.market_closed?"pasar tampaknya tutup":"belum ada sinyal BUY atau SELL")+'). Kartu ini menghitung otomatis begitu sinyal BUY atau SELL muncul.</p>';
+    return;
+  }
   const raw = $("bp").value, p = parsePrice(raw, sig.price);
   if(!raw.trim()){ out.innerHTML=""; return; }
   if(p==null){ out.innerHTML='<p class="note" style="color:var(--sell)">Angka belum terbaca. Contoh: 29011.91</p>'; return; }
