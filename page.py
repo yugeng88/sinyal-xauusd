@@ -58,6 +58,14 @@ h2{font-size:15px;margin-bottom:8px}
 .tab[aria-selected="true"]{color:var(--text);border-color:var(--accent);background:#1a1d33}
 .note-box{margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--wait);border:1px solid #5b4a1a;background:#2a2412;border-radius:8px;padding:8px 10px}
 .CLOSED{color:var(--mute)}
+.brow{display:flex;gap:8px;margin:8px 0}
+.brow input{flex:1;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:11px 12px;font:600 16px var(--font)}
+.brow button{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:0 14px;font:600 14px var(--font);cursor:pointer}
+.bgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.bgrid div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.bgrid small{display:block;color:var(--mute);font-size:11.5px;margin-bottom:3px}
+.bgrid b{font-size:16px;font-variant-numeric:tabular-nums}
+.bgrid i{display:block;font-style:normal;color:var(--mute);font-size:11.5px;margin-top:2px}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -73,6 +81,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <div id="err" class="card error" hidden></div>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
+  </section>
+  <section class="card" id="brokercard" hidden>
+    <h2>Pakai harga broker Anda</h2>
+    <p class="note">Harga di broker bisa berbeda dari data aplikasi. Ketik harga saat ini di broker Anda, lalu level Entry, SL, dan TP dihitung ulang dari jarak poin sinyal.</p>
+    <div class="brow"><input id="bp" inputmode="decimal" autocomplete="off" placeholder="mis. 29011.91" aria-label="Harga di broker Anda"><button id="bclear" type="button">Hapus</button></div>
+    <div id="bout"></div>
   </section>
   <section class="card" id="sumcard" hidden>
     <h2>Ringkasan teknikal</h2>
@@ -153,10 +167,48 @@ function render(s){
     .map(([a,b])=>`<div>${a}<b>${b}</b></div>`).join("");
   $("indcard").hidden = false;
   $("src").textContent = "Sumber: " + sig.source;
+  updateBroker();
 }
 
+function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k)||""; if(v) localStorage.setItem(k,v); else localStorage.removeItem(k); }catch(e){ return ""; } }
+function parsePrice(raw, ref){
+  const t = String(raw).replace(/\s/g,"");
+  if(!t) return null;
+  const c = [
+    parseFloat(t.replace(/,/g,"")),                          // 29,011.91 atau 29011.91
+    parseFloat(t.replace(/\./g,"").replace(",",".")),         // 29.011,91
+    parseFloat(t.replace(/[.,](?=.*[.,])/g,"").replace(",","."))  // 29.011.91 (pemisah campur)
+  ].filter(x=>isFinite(x)&&x>0);
+  if(!c.length) return null;
+  return c.sort((a,b)=>Math.abs(Math.log(a/ref))-Math.abs(Math.log(b/ref)))[0];   // ambil yang paling dekat harga acuan
+}
+function updateBroker(){
+  const card=$("brokercard"), out=$("bout");
+  const sig = last && last.signal, L = sig && sig.levels;
+  if(!L){ card.hidden = true; return; }
+  card.hidden = false;
+  const raw = $("bp").value, p = parsePrice(raw, sig.price);
+  if(!raw.trim()){ out.innerHTML=""; return; }
+  if(p==null){ out.innerHTML='<p class="note" style="color:var(--sell)">Angka belum terbaca. Contoh: 29011.91</p>'; return; }
+  const sl = L.stop_loss - L.entry, tp = L.tp.map(x=>x-L.entry);
+  const sg = v => (v>0?"+":"")+fmt(v);
+  const gap = Math.abs(p/sig.price-1)*100;
+  out.innerHTML = `
+    <div class="bgrid">
+      <div><small>Entry (harga broker)</small><b>${fmt(p)}</b></div>
+      <div><small>Stop loss</small><b class="sl">${fmt(p+sl)}</b><i>${sg(sl)} poin</i></div>
+      <div><small>Take profit 1</small><b class="tp">${fmt(p+tp[0])}</b><i>${sg(tp[0])} poin</i></div>
+      <div><small>Take profit 2</small><b class="tp">${fmt(p+tp[1])}</b><i>${sg(tp[1])} poin</i></div>
+      <div><small>Take profit 3</small><b class="tp">${fmt(p+tp[2])}</b><i>${sg(tp[2])} poin</i></div>
+      <div><small>Selisih ke harga aplikasi</small><b>${fmt(p-sig.price)}</b><i>${gap.toFixed(2)}%</i></div>
+    </div>
+    ${gap>0.5?'<p class="warn">Harga broker berbeda cukup jauh dari harga acuan sinyal ('+gap.toFixed(2)+'%). Sinyal mungkin sudah tidak relevan, atau angkanya salah ketik.</p>':""}`;
+}
+$("bp").addEventListener("input",()=>{ ls("bp_"+cur,$("bp").value.trim()); updateBroker(); });
+$("bclear").addEventListener("click",()=>{ $("bp").value=""; ls("bp_"+cur,""); updateBroker(); });
+
 function setTab(sym){
-  cur = sym; seq++; last = null;
+  cur = sym; seq++; last = null; $("bp").value = ls("bp_"+sym); $("brokercard").hidden = true;
   history.replaceState(null,"","#"+sym.toLowerCase());
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===sym));
   $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>';
@@ -191,6 +243,7 @@ async function load(){
 }
 async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 30000 : 5000); }
 document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
+$("bp").value = ls("bp_"+cur);
 cycle(); setInterval(tick, 15000);
 </script>
 </body>
