@@ -61,6 +61,15 @@ class DataError(Exception):
     pass
 
 
+def candidates_for(key):
+    """Urutan sumber. NASDAQ_SOURCE=futures: utamakan futures NQ=F (hampir 24 jam,
+    lebih mirip CFD NAS100 di broker daripada indeks tunai yang hanya jam bursa AS)."""
+    cands = list(SYMBOLS[key]["candidates"])
+    if key == "NASDAQ" and os.getenv("NASDAQ_SOURCE", "").strip().lower() == "futures":
+        cands.sort(key=lambda c: 0 if c[1] == "NQ=F" else 1)
+    return cands
+
+
 def _frame(rows):
     df = pd.DataFrame(rows, columns=["time", "open", "high", "low", "close"])
     df["time"] = pd.to_datetime(df["time"], utc=True)
@@ -118,7 +127,7 @@ def get_candles(key, tf="H1"):
     start = time.monotonic()
     errors = []
     min_rows = 150 if tf != "M1" else 60
-    for provider, sym, note in cfg["candidates"]:
+    for provider, sym, note in candidates_for(key):
         if time.monotonic() - start > BUDGET:
             errors.append("waktu habis, sumber berikutnya dilewati")
             break

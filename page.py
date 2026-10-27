@@ -76,6 +76,9 @@ h2{font-size:15px;margin-bottom:8px}
 .confirm ul{list-style:none;padding:0;margin:6px 0 0}.confirm li{display:flex;gap:6px;justify-content:space-between;font-size:12.5px;padding:2px 0}
 .confirm .y{color:var(--buy)}.confirm .n{color:var(--sell)}.confirm small{color:var(--mute)}
 .statline{font-size:12.5px;line-height:1.55;color:var(--mute);margin:0 0 10px}
+.calbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#10142a}
+.calbox h3{font-size:14px;margin:0 0 4px}.calbox .brow{margin:8px 0}
+.offchip{font-size:12px;color:var(--wait);margin-top:4px}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -99,7 +102,13 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <div class="empty" id="loading">Mengambil data pasar…</div>
   </section>
   <section class="card" id="brokercard" hidden>
-    <h2>Pakai harga broker Anda</h2>
+    <div class="calbox">
+      <h3>Samakan dengan broker / TradingView</h3>
+      <p class="note">Isi harga di broker atau chart TradingView (mis. FXCM) sekarang. Aplikasi membandingkannya dengan harga M1 terbaru, lalu menggeser semua harga di layar supaya sejajar. Sinyal tidak berubah, hanya angkanya.</p>
+      <div class="brow"><input id="cal" inputmode="decimal" autocomplete="off" placeholder="Harga broker/TV sekarang" aria-label="Harga broker atau TradingView sekarang"><button id="calbtn" type="button">Samakan</button></div>
+      <div id="calout"></div>
+    </div>
+    <h2>Hitung dari harga masuk Anda</h2>
     <p class="note">Harga di broker bisa berbeda dari data aplikasi. Ketik harga saat ini di broker Anda, lalu level Entry, SL, dan TP dihitung ulang dari jarak poin sinyal.</p>
     <div class="brow"><input id="bp" inputmode="decimal" autocomplete="off" placeholder="mis. 29011.91" aria-label="Harga di broker Anda"><button id="bclear" type="button">Hapus</button></div>
     <div class="brow"><input id="sp" inputmode="decimal" autocomplete="off" placeholder="Spread broker (poin), mis. 0.36" aria-label="Spread broker dalam poin"></div>
@@ -121,7 +130,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 5 · M5/M15/M30/H1 + konfirmasi M1</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 6 · harga bisa diselaraskan ke broker/TradingView</p>
 </main>
 
 <script>
@@ -135,6 +144,10 @@ const [h1_, h2_] = location.hash.replace("#","").toUpperCase().split("-");
 let cur = SYMS.includes(h1_) ? h1_ : "XAUUSD";
 let curTF = TFS.includes(h2_) ? h2_ : "H1";
 let seq = 0, lastConfirm = null;
+function loadOff(sym){ try{ const j = JSON.parse(ls("cal_"+sym)||"null"); return j && isFinite(j.v) ? j : null; }catch(e){ return null; } }
+let OFF = null;                                   // diisi setelah ls() siap (lihat bawah)
+const adj = x => (OFF && x!=null) ? x + OFF.v : x;
+const fp = (x,d=2) => fmt(adj(x),d);
 
 function activeOf(sig){ return sig && sig.tracking ? sig.tracking.active : null; }
 function levelsOf(sig){ const A = activeOf(sig); return sig && sig.tracking ? (A ? A.levels : null) : (sig && sig.levels); }
@@ -176,23 +189,24 @@ function render(s){
     const mv = A.move_points, R = A.levels.risk_points;
     const tpTxt = A.tp_hit>0 ? "TP"+A.tp_hit+" sudah tercapai" : "belum ada TP tercapai";
     status = `<div class="status-box"><b>Sinyal ${A.direction} aktif</b>, terbit ${ageText(A.age_hours)} lalu. Level dikunci saat terbit.<br>
-      Harga sekarang ${fmt(live)} (${mv>0?"+":""}${fmt(mv)} poin dari entry) · ${tpTxt}.<br>
+      Harga sekarang ${fp(live)} (${mv>0?"+":""}${fmt(mv)} poin dari entry) · ${tpTxt}.<br>
       Berlaku sampai SL, TP3, atau sekitar ${leftText(Math.max(0,A.expires_in_hours))} lagi.
       ${sig.direction!==A.direction && !closed ? `<br><span class="mute">Indikator saat ini: ${sig.direction==="WAIT"?"TUNGGU":sig.direction} (skor ${sig.score>0?"+":""}${sig.score}). Sinyal tetap berlaku sampai berakhir.</span>`:""}
       ${mv>R ? `<br><span class="warnline">Harga sudah bergerak lebih dari 1R dari entry. Masuk sekarang berarti RR lebih kecil dari yang tertera.</span>`:""}</div>
       <div id="confbox"></div>`;
   }
   const cells = L ? `
-    <div class="cell"><small>Entry</small><b>${fmt(L.entry)}</b></div>
-    <div class="cell"><small>Stop loss</small><b class="sl">${fmt(L.stop_loss)}</b></div>
-    <div class="cell"><small>Take profit 1 · RR 1:${L.rr[0]}</small><b class="tp">${fmt(L.tp[0])}</b></div>
-    <div class="cell"><small>Take profit 2 · RR 1:${L.rr[1]}</small><b class="tp">${fmt(L.tp[1])}</b></div>
-    <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fmt(L.tp[2])}</b></div>
+    <div class="cell"><small>Entry</small><b>${fp(L.entry)}</b></div>
+    <div class="cell"><small>Stop loss</small><b class="sl">${fp(L.stop_loss)}</b></div>
+    <div class="cell"><small>Take profit 1 · RR 1:${L.rr[0]}</small><b class="tp">${fp(L.tp[0])}</b></div>
+    <div class="cell"><small>Take profit 2 · RR 1:${L.rr[1]}</small><b class="tp">${fp(L.tp[1])}</b></div>
+    <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fp(L.tp[2])}</b></div>
     <div class="cell"><small>Jarak risiko</small><b>${fmt(L.risk_points)}</b></div>` : "";
   $("main").innerHTML = `
     <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">${esc(sig.timeframe)} · candle tertutup ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
     <span class="badge ${badgeCls}">${badgeTxt}</span></div>
-    <div class="price">${fmt(live)}</div>
+    <div class="price">${fp(live)}</div>
+    ${OFF?`<div class="offchip">Harga disesuaikan ke broker/TradingView (${OFF.v>0?"+":""}${fmt(OFF.v)} dari data aplikasi)</div>`:""}
     ${status}
     ${sig.note?`<div class="note-box">${esc(sig.note)}</div>`:""}
     <div class="chart">${chartSVG(sig)}</div>
@@ -204,7 +218,7 @@ function render(s){
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;
-  $("ind").innerHTML = [["EMA 20",fmt(i.ema20)],["EMA 50",fmt(i.ema50)],["EMA 100",fmt(i.ema100)],
+  $("ind").innerHTML = [["EMA 20",fp(i.ema20)],["EMA 50",fp(i.ema50)],["EMA 100",fp(i.ema100)],
     ["RSI 14",fmt(i.rsi14,1)],["ATR 14",fmt(i.atr14)],["24 jam",i.change_24h_pct==null?"–":(i.change_24h_pct>0?"+":"")+fmt(i.change_24h_pct)+"%"]]
     .map(([a,b])=>`<div>${a}<b>${b}</b></div>`).join("");
   $("indcard").hidden = false;
@@ -221,9 +235,11 @@ function renderConfirm(){
   if(!c){ box.innerHTML = '<div class="confirm na">Konfirmasi M1: memuat…</div>'; return; }
   if(!c.checks){ box.innerHTML = `<div class="confirm na"><b>Konfirmasi M1 belum tersedia.</b><br>${esc(c.message||"")}</div>`; return; }
   const ok = c.state === "CONFIRMED";
-  const items = c.checks.map(x=>`<li><span>${x.ok?'<span class="y">✔</span>':'<span class="n">✖</span>'} ${esc(x.name)}</span><small>${esc(x.detail)}</small></li>`).join("");
-  const first = c.first_time ? `<br><small>${ok?"Pertama terkonfirmasi":"Sempat terkonfirmasi"} pukul ${esc(c.first_time.slice(11,16))} UTC di sekitar ${fmt(c.first_price)}${ok?"":" (kini belum)"}.</small>` : "";
-  box.innerHTML = `<div class="confirm ${ok?"ok":"wait"}"><b>Konfirmasi M1: ${ok?"TERKONFIRMASI":"BELUM"}</b>${ok?` · harga M1 ${fmt(c.price)}`:""}<ul>${items}</ul>${first}
+  const items = c.checks.map(x=>{
+    const det = x.parts ? x.parts.map(p=>p.label+" "+(p.price ? fp(p.v) : fmt(p.v, p.d ?? 2))).join(" · ") : x.detail;
+    return `<li><span>${x.ok?'<span class="y">✔</span>':'<span class="n">✖</span>'} ${esc(x.name)}</span><small>${esc(det)}</small></li>`; }).join("");
+  const first = c.first_time ? `<br><small>${ok?"Pertama terkonfirmasi":"Sempat terkonfirmasi"} pukul ${esc(c.first_time.slice(11,16))} UTC di sekitar ${fp(c.first_price)}${ok?"":" (kini belum)"}.</small>` : "";
+  box.innerHTML = `<div class="confirm ${ok?"ok":"wait"}"><b>Konfirmasi M1: ${ok?"TERKONFIRMASI":"BELUM"}</b>${ok?` · harga M1 ${fp(c.price)}`:""}<ul>${items}</ul>${first}
     <br><small>Aturan heuristik, bukan jaminan. Sumber M1: ${esc(c.source||"–")}.</small>${c.warning?`<br><small>${esc(c.warning)}</small>`:""}</div>`;
 }
 async function loadConfirm(my){
@@ -252,7 +268,7 @@ function updateBroker(){
   const card=$("brokercard"), out=$("bout");
   const sig = last && last.signal, L = levelsOf(sig);
   if(!sig){ card.hidden = true; return; }
-  const ref = sig.live_price ?? sig.price;
+  const ref = adj(sig.live_price ?? sig.price);
   card.hidden = false;
   if(!L){
     out.innerHTML = '<p class="note">Belum ada level untuk dihitung ulang ('+(sig.market_closed?"pasar tampaknya tutup":"belum ada sinyal BUY atau SELL")+'). Kartu ini menghitung otomatis begitu sinyal BUY atau SELL muncul.</p>';
@@ -282,8 +298,46 @@ $("bp").addEventListener("input",()=>{ ls("bp_"+cur,$("bp").value.trim()); updat
 $("sp").addEventListener("input",()=>{ ls("sp_"+cur,$("sp").value.trim()); updateBroker(); });
 $("bclear").addEventListener("click",()=>{ $("bp").value=""; $("sp").value=""; ls("bp_"+cur,""); ls("sp_"+cur,""); updateBroker(); });
 
+let calMsg = "";
+function renderCal(){
+  const out = $("calout"); if(!out) return;
+  if(!OFF){ out.innerHTML = calMsg; return; }
+  const mins = Math.round((Date.now() - OFF.t)/60000);
+  const old = mins > 360;
+  out.innerHTML = calMsg + `<p class="note"><b>Aktif:</b> semua harga digeser ${OFF.v>0?"+":""}${fmt(OFF.v)} poin (broker/TV − data aplikasi), dikalibrasi ${mins<1?"baru saja":mins+" menit lalu"}.
+    ${OFF.age>120?`<br>Saat itu data M1 tertinggal ${Math.round(OFF.age/60)} menit, jadi selisih bisa meleset sebesar pergerakan harga selama itu.`:""}
+    ${old?`<br><span style="color:var(--wait)">Kalibrasi sudah lama. Ulangi bila selisih berubah (mis. pergantian kontrak atau spread melebar).</span>`:""}
+    <br><button id="caloff" type="button" style="margin-top:6px;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:600 13px var(--font)">Matikan penyesuaian</button></p>`;
+  $("caloff").addEventListener("click",()=>{ OFF = null; calMsg = ""; ls("cal_"+cur,""); repaint(); });
+}
+function repaint(){
+  if(last && last.signal){ render(last); renderHistory(last.signal); }
+  renderCal();
+}
+async function calibrate(){
+  const raw = $("cal").value;
+  if(!raw.trim()) return;
+  const say = html => { calMsg = html; renderCal(); };
+  say('<p class="note">Mengambil harga M1 terbaru…</p>');
+  try{
+    const q = await (await fetch(`/api/quote?symbol=${cur}`,{cache:"no-store"})).json();
+    if(!q.price){ say(`<p class="warn">${esc(q.message||"Harga M1 belum bisa diambil.")}</p>`); return; }
+    if(q.age_seconds > 600){ say(`<p class="warn">Harga di aplikasi tertinggal ${Math.round(q.age_seconds/60)} menit (pasar tutup atau data tertunda). Kalibrasi tidak akurat, coba lagi saat pasar buka.</p>`); return; }
+    const p = parsePrice(raw, q.price);
+    if(p == null){ say('<p class="warn">Angka belum terbaca. Contoh: 29011.91</p>'); return; }
+    const d = p - q.price, pct = Math.abs(d/q.price)*100;
+    if(pct > 2){ say(`<p class="warn">Selisih ${pct.toFixed(1)}% terlalu besar. Kemungkinan instrumennya berbeda (mis. sumber data memakai ETF atau futures), jadi penyesuaian tidak diterapkan. Cek kolom Sumber di bagian bawah.</p>`); return; }
+    OFF = {v: Math.round(d*100)/100, t: Date.now(), age: q.age_seconds, src: q.source, price: q.price};
+    ls("cal_"+cur, JSON.stringify(OFF));
+    $("cal").value = ""; calMsg = "";
+    repaint();
+  }catch(e){ say('<p class="warn">Tidak bisa menghubungi server.</p>'); }
+}
+$("calbtn").addEventListener("click", calibrate);
+$("cal").addEventListener("keydown", e=>{ if(e.key==="Enter") calibrate(); });
+
 function switchView(sym, tf){
-  cur = sym; curTF = tf; seq++; last = null; lastConfirm = null;
+  cur = sym; curTF = tf; seq++; last = null; lastConfirm = null; OFF = loadOff(sym); calMsg = ""; renderCal();
   $("bp").value = ls("bp_"+sym); $("sp").value = ls("sp_"+sym); $("brokercard").hidden = true;
   history.replaceState(null,"","#"+sym.toLowerCase()+"-"+tf.toLowerCase());
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===sym));
@@ -315,7 +369,7 @@ function renderHistory(sig){
   $("histcard").hidden = !rows.length && !(st && st.total);
   $("stats").textContent = !st ? "" : st.total === 0 ? "Belum ada sinyal yang selesai pada data ini." :
     `Dalam data ±${st.days} hari (${st.total} sinyal selesai): ${st.sl_first} kena SL sebelum TP1 (${Math.round(st.sl_first/st.total*100)}%), ${st.tp1plus} mencapai TP1 atau lebih (${st.tp3} sampai TP3), ${st.no_result} tanpa hasil (kedaluwarsa atau berbalik). Setelah SL, sinyal arah sama diblokir ${st.cooldown_bars} candle. Ini hasil data lalu, bukan jaminan ke depan.`;
-  $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
+  $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fp(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
 }
 async function load(){
   const my = seq, sym = cur, tf = curTF;
@@ -332,6 +386,7 @@ async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 
 document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
 document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===curTF));
 $("bp").value = ls("bp_"+cur); $("sp").value = ls("sp_"+cur);
+OFF = loadOff(cur); renderCal();
 cycle(); setInterval(tick, 15000);
 </script>
 </body>

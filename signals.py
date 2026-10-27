@@ -384,16 +384,21 @@ def confirm_m1(m1, direction, levels, issued_close, now=None):
     now_ok = bool(flag.iloc[-1]) and bool(after[-1])
     px = float(c.iloc[-1])
     up = "atas" if direction == "BUY" else "bawah"
+    e9v, e21v, rv = float(e9.iloc[-1]), float(e21.iloc[-1]), float(r.iloc[-1])
+    limit = entry + sign * ZONE_R * risk
     checks = [
         {"name": f"EMA9 di {up} EMA21", "ok": bool(trend.iloc[-1]),
-         "detail": f"{float(e9.iloc[-1]):.2f} vs {float(e21.iloc[-1]):.2f}"},
+         "detail": f"{e9v:.2f} vs {e21v:.2f}",
+         "parts": [{"label": "EMA9", "v": e9v, "price": True}, {"label": "EMA21", "v": e21v, "price": True}]},
         {"name": f"Close M1 di {up} EMA9", "ok": bool(side.iloc[-1]),
-         "detail": f"{px:.2f} vs {float(e9.iloc[-1]):.2f}"},
+         "detail": f"{px:.2f} vs {e9v:.2f}",
+         "parts": [{"label": "Close", "v": px, "price": True}, {"label": "EMA9", "v": e9v, "price": True}]},
         {"name": f"RSI M1 {'>' if direction == 'BUY' else '<'} 50", "ok": bool(mom.iloc[-1]),
-         "detail": f"{float(r.iloc[-1]):.0f}"},
+         "detail": f"{rv:.0f}", "parts": [{"label": "RSI", "v": rv, "price": False, "d": 0}]},
         {"name": "Harga di zona entry (belum kena SL, tidak mengejar)", "ok": bool(zone.iloc[-1]),
-         "detail": f"{px:.2f}; SL {sl:.2f}; batas kejar "
-                   f"{(entry + sign * ZONE_R * risk):.2f}"},
+         "detail": f"{px:.2f}; SL {sl:.2f}; batas kejar {limit:.2f}",
+         "parts": [{"label": "Harga", "v": px, "price": True}, {"label": "SL", "v": sl, "price": True},
+                   {"label": "Batas kejar", "v": limit, "price": True}]},
     ]
     out = {"state": "CONFIRMED" if now_ok else "WAIT", "checks": checks,
            "m1_time": closed.iloc[-1]["time"].isoformat(), "price": round(px, 2),

@@ -214,6 +214,23 @@ def api_confirm():
     return jsonify(confirm=out, symbol=sym, tf=tf, signal_time=a["time"])
 
 
+@app.get("/api/quote")
+def api_quote():
+    """Harga M1 terbaru, dipakai untuk menyelaraskan harga dengan broker/TradingView."""
+    sym = (request.args.get("symbol") or SYMS[0]).upper()
+    if sym not in SYMS:
+        return jsonify(price=None, message="Instrumen tidak dikenal"), 404
+    c = get_m1(sym)
+    if c["df"] is None:
+        return jsonify(price=None, message="Data M1 belum bisa diambil: " + (c["error"] or "belum ada data"))
+    last = c["df"].iloc[-1]
+    t_now = pd.Timestamp.now(tz="UTC")
+    lag = max(0.0, (t_now - last["time"]).total_seconds() - 60)          # keterlambatan penyedia data
+    fetched = (now() - c["at"]).total_seconds() if c["at"] else 0.0       # umur cache server
+    return jsonify(price=round(float(last["close"]), 2), time=last["time"].isoformat(),
+                   source=c["source"], age_seconds=round(lag + fetched), error=c["error"])
+
+
 @app.get("/healthz")
 def healthz():
     return jsonify(ok=True, has_signal={f"{s}/{t}": states[(s, t)]["signal"] is not None
