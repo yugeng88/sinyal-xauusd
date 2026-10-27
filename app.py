@@ -1,8 +1,8 @@
-"""Aplikasi sinyal H1 untuk XAUUSD dan NASDAQ: satu aplikasi, dua tab.
+"""Aplikasi sinyal untuk XAUUSD dan NASDAQ: timeframe M5, M15, M30, H1 + konfirmasi M1.
 
 Dua mode, kode sama:
-- Server biasa:  python app.py  -> thread latar belakang memperbarui tiap UPDATE_MINUTES
-- Serverless (Vercel): data dihitung saat halaman meminta, dengan cache UPDATE_MINUTES
+- Server biasa:  python app.py  -> thread latar belakang memperbarui H1 tiap UPDATE_MINUTES
+- Serverless (Vercel): data dihitung saat halaman meminta, dengan cache per timeframe
 """
 import json
 import os
@@ -10,6 +10,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import requests
 from flask import Flask, Response, jsonify, request
 
@@ -17,15 +18,14 @@ import data
 import page
 import signals
 
-UPDATE_MINUTES = max(int(os.getenv("UPDATE_MINUTES", "15")), 1)
-HISTORY_FILE = os.getenv("HISTORY_FILE",
-                         "/tmp/history.jsonl" if os.getenv("VERCEL") else "history.jsonl")
+UPDATE_MINUTES = max(int(os.getenv("UPDATE_MINUTES", "15")), 1)   # khusus H1
 PORT = int(os.getenv("PORT", "8000"))
 SYMS = list(data.SYMBOLS)
+TFS = data.SIGNAL_TFS
 
 app = Flask(__name__, static_folder=None)
 lock = threading.Lock()
-busy = {s: threading.Lock() for s in SYMS}
+busy = {(s, t): threading.Lock() for s in SYMS for t in TFS}
 narrative_cache = {}
 
 
@@ -34,11 +34,17 @@ def new_state():
             "error": None, "last_attempt": None}
 
 
-states = {s: new_state() for s in SYMS}
+states = {(s, t): new_state() for s in SYMS for t in TFS}
+m1 = {s: {"df": None, "source": None, "at": None, "error": None} for s in SYMS}
+m1_busy = {s: threading.Lock() for s in SYMS}
 
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def ttl_seconds(tf):
+    return UPDATE_MINUTES * 60 if tf == "H1" else data.TF[tf]["ttl"]
 
 
 def claude_narrative(sig):
@@ -46,11 +52,11 @@ def claude_narrative(sig):
     key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return None
-    ck = (sig["symbol"], sig["candle_time"], sig["direction"])
+    ck = (sig["symbol"], sig["timeframe"], sig["candle_time"], sig["direction"])
     if ck in narrative_cache:
         return narrative_cache[ck]
     facts = json.dumps({k: sig[k] for k in
-                        ("label", "direction", "score", "confidence", "price",
+                        ("label", "timeframe", "direction", "score", "confidence", "price",
                          "indicators", "levels", "reasons", "warnings", "market_closed")},
                        ensure_ascii=False)
     try:
@@ -60,7 +66,7 @@ def claude_narrative(sig):
                      "content-type": "application/json"},
             json={"model": os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
                   "max_tokens": 400,
-                  "system": ("Kamu menulis ringkasan teknikal H1 dalam Bahasa Indonesia, "
+                  "system": ("Kamu menulis ringkasan teknikal dalam Bahasa Indonesia, "
                              "3-4 kalimat. Pakai HANYA angka pada data yang diberikan. "
                              "Dilarang menambah angka, berita, atau prediksi baru. "
                              "Jangan menjanjikan profit."),
@@ -85,36 +91,25 @@ def telegram(msg):
         pass
 
 
-def log_history(sig):
-    row = {k: sig[k] for k in ("symbol", "candle_time", "direction", "score",
-                               "confidence", "price", "levels")}
-    row["logged_at"] = now().isoformat()
+def refresh(sym, tf):
+    """Satu siklus untuk satu instrumen dan timeframe."""
+    if not busy[(sym, tf)].acquire(blocking=False):
+        return  # siklus lain sedang berjalan
     try:
-        with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError:
-        pass  # penyimpanan tidak tersedia: abaikan, sinyal tetap tampil
-
-
-def refresh(sym):
-    """Satu siklus untuk satu instrumen: ambil data nyata -> hitung -> simpan."""
-    if not busy[sym].acquire(blocking=False):
-        return  # siklus lain untuk instrumen ini sedang berjalan
-    try:
-        _refresh(sym)
+        _refresh(sym, tf)
     finally:
-        busy[sym].release()
+        busy[(sym, tf)].release()
 
 
-def _refresh(sym):
-    st = states[sym]
+def _refresh(sym, tf):
+    st = states[(sym, tf)]
     with lock:
         st["last_attempt"] = now().isoformat()
     try:
-        df, source, note = data.get_candles(sym)
-        sig = signals.analyze(df, source, symbol=sym,
-                              label=data.SYMBOLS[sym]["label"], note=note)
-        sig["tracking"] = signals.track(df)
+        df, source, note = data.get_candles(sym, tf)
+        sig = signals.analyze(df, source, symbol=sym, label=data.SYMBOLS[sym]["label"],
+                              note=note, tf=tf)
+        sig["tracking"] = signals.track(df, tf=tf)
     except Exception as e:  # noqa: BLE001
         with lock:
             st["error"] = f"{type(e).__name__}: {e}"
@@ -122,79 +117,107 @@ def _refresh(sym):
     summary = claude_narrative(sig) or signals.summary_text(sig)
     with lock:
         prev = st["signal"]
-        new_candle = prev is None or prev["candle_time"] != sig["candle_time"]
-        changed = prev is not None and prev["direction"] != sig["direction"]
         st.update(signal=sig, summary=summary, error=None, updated_at=now().isoformat())
-    if new_candle:
-        log_history(sig)
-    if changed and sig["direction"] != "WAIT":
-        lv = sig["levels"]
-        extra = f"\nEntry {lv['entry']} | SL {lv['stop_loss']} | TP {lv['tp']}" if lv else ""
-        telegram(f"{sig['label']} H1: {prev['direction']} -> {sig['direction']} "
-                 f"(keyakinan {sig['confidence']}%){extra}\nBukan saran investasi.")
+    new_a = sig["tracking"]["active"]
+    old_a = prev["tracking"]["active"] if prev else None
+    if new_a and (old_a is None or old_a["time"] != new_a["time"]):
+        lv = new_a["levels"]
+        telegram(f"{sig['label']} {tf}: sinyal {new_a['direction']} "
+                 f"(keyakinan {new_a['confidence']}%)\n"
+                 f"Entry {lv['entry']} | SL {lv['stop_loss']} | TP {lv['tp']}\n"
+                 "Cek konfirmasi M1 di dasbor. Bukan saran investasi.")
 
 
-def ensure_fresh(sym):
-    """Hitung ulang hanya bila data lebih tua dari interval (galat dicoba lagi 1 menit)."""
+def ensure_fresh(sym, tf):
+    """Hitung ulang hanya bila data lebih tua dari TTL (galat dicoba lagi 1 menit)."""
     with lock:
-        la, err = states[sym]["last_attempt"], states[sym]["error"]
-    gap = timedelta(minutes=1 if err else UPDATE_MINUTES)
+        la, err = states[(sym, tf)]["last_attempt"], states[(sym, tf)]["error"]
+    gap = timedelta(seconds=60 if err else ttl_seconds(tf))
     if la is None or now() - datetime.fromisoformat(la) > gap:
-        refresh(sym)
+        refresh(sym, tf)
+
+
+def get_m1(sym):
+    """Candle M1 untuk konfirmasi; diambil ulang paling cepat tiap TTL M1."""
+    c = m1[sym]
+    ttl = timedelta(seconds=data.TF["M1"]["ttl"])
+    if (c["at"] is None or now() - c["at"] > ttl) and m1_busy[sym].acquire(blocking=False):
+        try:
+            df, src, _ = data.get_candles(sym, "M1")
+            c.update(df=df, source=src, at=now(), error=None)
+        except Exception as e:  # noqa: BLE001
+            c.update(at=now(), error=f"{type(e).__name__}: {e}")
+        finally:
+            m1_busy[sym].release()
+    return c
 
 
 def loop():
     while True:
         for sym in SYMS:
             try:
-                refresh(sym)
+                refresh(sym, "H1")
             except Exception as e:  # noqa: BLE001  - loop tidak boleh mati
                 with lock:
-                    states[sym]["error"] = f"Loop: {e}"
+                    states[(sym, "H1")]["error"] = f"Loop: {e}"
         time.sleep(UPDATE_MINUTES * 60)
 
 
-def pick_symbol():
+def pick():
     sym = (request.args.get("symbol") or SYMS[0]).upper()
-    return sym if sym in states else None
+    tf = (request.args.get("tf") or "H1").upper()
+    return (sym, tf) if sym in SYMS and tf in TFS else (None, None)
 
 
 @app.get("/api/signal")
 def api_signal():
-    sym = pick_symbol()
+    sym, tf = pick()
     if sym is None:
-        return jsonify(error="Instrumen tidak dikenal", symbols=SYMS), 404
-    ensure_fresh(sym)
+        return jsonify(error="Instrumen atau timeframe tidak dikenal",
+                       symbols=SYMS, timeframes=TFS), 404
+    ensure_fresh(sym, tf)
     with lock:
-        s = dict(states[sym])
+        s = dict(states[(sym, tf)])
     nxt = None
     if s["last_attempt"]:
         nxt = (datetime.fromisoformat(s["last_attempt"])
-               + timedelta(minutes=UPDATE_MINUTES)).isoformat()
-    s.update(symbol=sym, update_minutes=UPDATE_MINUTES, next_update=nxt,
+               + timedelta(seconds=ttl_seconds(tf))).isoformat()
+    s.update(symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
              now=now().isoformat())
     return jsonify(s)
 
 
-@app.get("/api/history")
-def api_history():
-    sym = pick_symbol()
+@app.get("/api/confirm")
+def api_confirm():
+    """Konfirmasi M1 untuk sinyal aktif. Dipisah agar halaman utama tidak menunggu data M1."""
+    sym, tf = pick()
     if sym is None:
-        return jsonify([]), 404
-    rows = []
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, encoding="utf-8") as f:
-            for x in f:
-                if x.strip():
-                    r = json.loads(x)
-                    if r.get("symbol", "XAUUSD") == sym:
-                        rows.append(r)
-    return jsonify(rows[-50:][::-1])
+        return jsonify(error="Instrumen atau timeframe tidak dikenal"), 404
+    with lock:
+        sig = states[(sym, tf)]["signal"]
+    a = sig["tracking"]["active"] if sig and sig.get("tracking") else None
+    if not a:
+        return jsonify(confirm=None, symbol=sym, tf=tf)
+    c = get_m1(sym)
+    if c["df"] is None:
+        return jsonify(confirm={"state": "ERROR",
+                                "message": "Data M1 belum bisa diambil: " + (c["error"] or "belum ada data")},
+                       symbol=sym, tf=tf, signal_time=a["time"])
+    try:
+        out = signals.confirm_m1(c["df"], a["direction"], a["levels"],
+                                 pd.Timestamp(a["time_close"]), now=pd.Timestamp.now(tz="UTC"))
+    except Exception as e:  # noqa: BLE001
+        out = {"state": "ERROR", "message": f"{type(e).__name__}: {e}"}
+    out["source"] = c["source"]
+    if c["error"]:
+        out["warning"] = "Pembaruan M1 terakhir gagal: " + c["error"]
+    return jsonify(confirm=out, symbol=sym, tf=tf, signal_time=a["time"])
 
 
 @app.get("/healthz")
 def healthz():
-    return jsonify(ok=True, has_signal={s: states[s]["signal"] is not None for s in SYMS})
+    return jsonify(ok=True, has_signal={f"{s}/{t}": states[(s, t)]["signal"] is not None
+                                        for s in SYMS for t in TFS})
 
 
 @app.get("/")

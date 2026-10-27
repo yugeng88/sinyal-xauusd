@@ -68,6 +68,14 @@ h2{font-size:15px;margin-bottom:8px}
 .bgrid i{display:block;font-style:normal;color:var(--mute);font-size:11.5px;margin-top:2px}
 .status-box{margin-top:10px;font-size:13px;line-height:1.55;border:1px solid #2c3a66;background:#141a33;border-radius:8px;padding:9px 11px}
 .status-box .mute{color:var(--mute)} .status-box .warnline{color:var(--wait)}
+.tfs{display:flex;gap:6px}
+.tf{flex:1;background:transparent;color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 0;font:600 13px var(--font);cursor:pointer}
+.tf[aria-selected="true"]{color:var(--text);border-color:#4a5688;background:#171c35}
+.confirm{margin-top:8px;font-size:13px;line-height:1.5;border-radius:8px;padding:9px 11px;border:1px solid var(--line)}
+.confirm.ok{border-color:#1f6b3d;background:#10241a}.confirm.wait{border-color:#6b5a1f;background:#241f10}.confirm.na{background:#171a2c}
+.confirm ul{list-style:none;padding:0;margin:6px 0 0}.confirm li{display:flex;gap:6px;justify-content:space-between;font-size:12.5px;padding:2px 0}
+.confirm .y{color:var(--buy)}.confirm .n{color:var(--sell)}.confirm small{color:var(--mute)}
+.statline{font-size:12.5px;line-height:1.55;color:var(--mute);margin:0 0 10px}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -80,6 +88,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <button class="tab" role="tab" id="tab-XAUUSD" data-sym="XAUUSD">XAUUSD</button>
     <button class="tab" role="tab" id="tab-NASDAQ" data-sym="NASDAQ">NASDAQ</button>
   </div>
+  <div class="tfs" role="tablist" aria-label="Pilih timeframe">
+    <button class="tf" role="tab" data-tf="M5">M5</button>
+    <button class="tf" role="tab" data-tf="M15">M15</button>
+    <button class="tf" role="tab" data-tf="M30">M30</button>
+    <button class="tf" role="tab" data-tf="H1">H1</button>
+  </div>
   <div id="err" class="card error" hidden></div>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
@@ -88,6 +102,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <h2>Pakai harga broker Anda</h2>
     <p class="note">Harga di broker bisa berbeda dari data aplikasi. Ketik harga saat ini di broker Anda, lalu level Entry, SL, dan TP dihitung ulang dari jarak poin sinyal.</p>
     <div class="brow"><input id="bp" inputmode="decimal" autocomplete="off" placeholder="mis. 29011.91" aria-label="Harga di broker Anda"><button id="bclear" type="button">Hapus</button></div>
+    <div class="brow"><input id="sp" inputmode="decimal" autocomplete="off" placeholder="Spread broker (poin), mis. 0.36" aria-label="Spread broker dalam poin"></div>
     <div id="bout"></div>
   </section>
   <section class="card" id="sumcard" hidden>
@@ -101,11 +116,12 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   </section>
   <section class="card" id="histcard" hidden>
     <h2>Riwayat sinyal (dihitung ulang dari data candle)</h2>
+    <p class="statline" id="stats"></p>
     <table class="hist"><thead><tr><th>Terbit (UTC)</th><th>Arah</th><th>Entry</th><th>Hasil</th></tr></thead>
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 4 · sinyal bertahan sampai SL, TP3, atau kedaluwarsa</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 5 · M5/M15/M30/H1 + konfirmasi M1</p>
 </main>
 
 <script>
@@ -114,15 +130,18 @@ const fmt = (n, d=2) => n == null ? "–" : Number(n).toLocaleString("en-US",{mi
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let last = null;
 const SYMS = ["XAUUSD","NASDAQ"];
-let cur = (location.hash.replace("#","").toUpperCase());
-if(!SYMS.includes(cur)) cur = "XAUUSD";
-let seq = 0;
+const TFS = ["M5","M15","M30","H1"];
+const [h1_, h2_] = location.hash.replace("#","").toUpperCase().split("-");
+let cur = SYMS.includes(h1_) ? h1_ : "XAUUSD";
+let curTF = TFS.includes(h2_) ? h2_ : "H1";
+let seq = 0, lastConfirm = null;
 
 function activeOf(sig){ return sig && sig.tracking ? sig.tracking.active : null; }
 function levelsOf(sig){ const A = activeOf(sig); return sig && sig.tracking ? (A ? A.levels : null) : (sig && sig.levels); }
 const OUT = {SL:"Kena SL", TP3:"TP3 tercapai", EXPIRED:"Kedaluwarsa", REVERSED:"Berbalik arah", OPEN:"Pasar tutup", ACTIVE:"Aktif"};
 function outText(o, tp){ let t = OUT[o] || o; if(tp>0 && (o==="SL"||o==="EXPIRED"||o==="REVERSED"||o==="ACTIVE"||o==="OPEN")) t += " · TP"+tp+" tercapai"; return t; }
-function ageText(h){ return h<1 ? "kurang dari 1 jam" : (Math.round(h*10)/10)+" jam"; }
+function ageText(h){ return h<1 ? Math.max(1,Math.round(h*60))+" menit" : (Math.round(h*10)/10)+" jam"; }
+function leftText(h){ return h<1 ? Math.max(0,Math.round(h*60))+" menit" : Math.round(h*10)/10+" jam"; }
 
 function chartSVG(sig){
   const pts = sig.chart, L = levelsOf(sig);
@@ -158,9 +177,10 @@ function render(s){
     const tpTxt = A.tp_hit>0 ? "TP"+A.tp_hit+" sudah tercapai" : "belum ada TP tercapai";
     status = `<div class="status-box"><b>Sinyal ${A.direction} aktif</b>, terbit ${ageText(A.age_hours)} lalu. Level dikunci saat terbit.<br>
       Harga sekarang ${fmt(live)} (${mv>0?"+":""}${fmt(mv)} poin dari entry) · ${tpTxt}.<br>
-      Berlaku sampai SL, TP3, atau sekitar ${Math.max(0,Math.round(A.expires_in_hours))} jam lagi.
+      Berlaku sampai SL, TP3, atau sekitar ${leftText(Math.max(0,A.expires_in_hours))} lagi.
       ${sig.direction!==A.direction && !closed ? `<br><span class="mute">Indikator saat ini: ${sig.direction==="WAIT"?"TUNGGU":sig.direction} (skor ${sig.score>0?"+":""}${sig.score}). Sinyal tetap berlaku sampai berakhir.</span>`:""}
-      ${mv>R ? `<br><span class="warnline">Harga sudah bergerak lebih dari 1R dari entry. Masuk sekarang berarti RR lebih kecil dari yang tertera.</span>`:""}</div>`;
+      ${mv>R ? `<br><span class="warnline">Harga sudah bergerak lebih dari 1R dari entry. Masuk sekarang berarti RR lebih kecil dari yang tertera.</span>`:""}</div>
+      <div id="confbox"></div>`;
   }
   const cells = L ? `
     <div class="cell"><small>Entry</small><b>${fmt(L.entry)}</b></div>
@@ -170,7 +190,7 @@ function render(s){
     <div class="cell"><small>Take profit 3 · RR 1:${L.rr[2]}</small><b class="tp">${fmt(L.tp[2])}</b></div>
     <div class="cell"><small>Jarak risiko</small><b>${fmt(L.risk_points)}</b></div>` : "";
   $("main").innerHTML = `
-    <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">Day trade · ${esc(sig.timeframe)} · candle tertutup ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
+    <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">${esc(sig.timeframe)} · candle tertutup ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
     <span class="badge ${badgeCls}">${badgeTxt}</span></div>
     <div class="price">${fmt(live)}</div>
     ${status}
@@ -189,7 +209,31 @@ function render(s){
     .map(([a,b])=>`<div>${a}<b>${b}</b></div>`).join("");
   $("indcard").hidden = false;
   $("src").textContent = "Sumber: " + sig.source;
+  renderConfirm();
   updateBroker();
+}
+
+function renderConfirm(){
+  const box = $("confbox"); if(!box) return;
+  const A = activeOf(last && last.signal);
+  if(!A){ box.innerHTML = ""; return; }
+  const j = lastConfirm, c = j && j.signal_time === A.time ? j.confirm : null;
+  if(!c){ box.innerHTML = '<div class="confirm na">Konfirmasi M1: memuat…</div>'; return; }
+  if(!c.checks){ box.innerHTML = `<div class="confirm na"><b>Konfirmasi M1 belum tersedia.</b><br>${esc(c.message||"")}</div>`; return; }
+  const ok = c.state === "CONFIRMED";
+  const items = c.checks.map(x=>`<li><span>${x.ok?'<span class="y">✔</span>':'<span class="n">✖</span>'} ${esc(x.name)}</span><small>${esc(x.detail)}</small></li>`).join("");
+  const first = c.first_time ? `<br><small>${ok?"Pertama terkonfirmasi":"Sempat terkonfirmasi"} pukul ${esc(c.first_time.slice(11,16))} UTC di sekitar ${fmt(c.first_price)}${ok?"":" (kini belum)"}.</small>` : "";
+  box.innerHTML = `<div class="confirm ${ok?"ok":"wait"}"><b>Konfirmasi M1: ${ok?"TERKONFIRMASI":"BELUM"}</b>${ok?` · harga M1 ${fmt(c.price)}`:""}<ul>${items}</ul>${first}
+    <br><small>Aturan heuristik, bukan jaminan. Sumber M1: ${esc(c.source||"–")}.</small>${c.warning?`<br><small>${esc(c.warning)}</small>`:""}</div>`;
+}
+async function loadConfirm(my){
+  const A = activeOf(last && last.signal);
+  if(!A){ lastConfirm = null; renderConfirm(); return; }
+  try{
+    const r = await fetch(`/api/confirm?symbol=${cur}&tf=${curTF}`,{cache:"no-store"}); const j = await r.json();
+    if(my!==seq) return; lastConfirm = j;
+  }catch(e){ if(my!==seq) return; lastConfirm = {signal_time:A.time, confirm:{state:"ERROR", message:"Tidak bisa menghubungi server."}}; }
+  renderConfirm();
 }
 
 function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k)||""; if(v) localStorage.setItem(k,v); else localStorage.removeItem(k); }catch(e){ return ""; } }
@@ -214,8 +258,11 @@ function updateBroker(){
     out.innerHTML = '<p class="note">Belum ada level untuk dihitung ulang ('+(sig.market_closed?"pasar tampaknya tutup":"belum ada sinyal BUY atau SELL")+'). Kartu ini menghitung otomatis begitu sinyal BUY atau SELL muncul.</p>';
     return;
   }
+  const spRaw = parseFloat(String($("sp").value).replace(",","."));
+  const spHtml = (isFinite(spRaw) && spRaw>0) ? (()=>{ const pct = spRaw/L.risk_points*100;
+    return `<p class="${pct>20?"warn":"note"}" style="margin-top:10px">Spread ${fmt(spRaw)} poin = ${pct.toFixed(0)}% dari jarak SL (${fmt(L.risk_points)} poin).${pct>20?" Spread sebesar ini sangat mengurangi RR di timeframe kecil. Pertimbangkan tidak masuk.":""}</p>`; })() : "";
   const raw = $("bp").value, p = parsePrice(raw, ref);
-  if(!raw.trim()){ out.innerHTML=""; return; }
+  if(!raw.trim()){ out.innerHTML = spHtml; return; }
   if(p==null){ out.innerHTML='<p class="note" style="color:var(--sell)">Angka belum terbaca. Contoh: 29011.91</p>'; return; }
   const sl = L.stop_loss - L.entry, tp = L.tp.map(x=>x-L.entry);
   const sg = v => (v>0?"+":"")+fmt(v);
@@ -229,29 +276,33 @@ function updateBroker(){
       <div><small>Take profit 3</small><b class="tp">${fmt(p+tp[2])}</b><i>${sg(tp[2])} poin</i></div>
       <div><small>Selisih ke harga aplikasi</small><b>${fmt(p-ref)}</b><i>${gap.toFixed(2)}%</i></div>
     </div>
-    ${gap>0.5?'<p class="warn">Harga broker berbeda cukup jauh dari harga acuan sinyal ('+gap.toFixed(2)+'%). Sinyal mungkin sudah tidak relevan, atau angkanya salah ketik.</p>':""}`;
+    ${gap>0.5?'<p class="warn">Harga broker berbeda cukup jauh dari harga acuan sinyal ('+gap.toFixed(2)+'%). Sinyal mungkin sudah tidak relevan, atau angkanya salah ketik.</p>':""}${spHtml}`;
 }
 $("bp").addEventListener("input",()=>{ ls("bp_"+cur,$("bp").value.trim()); updateBroker(); });
-$("bclear").addEventListener("click",()=>{ $("bp").value=""; ls("bp_"+cur,""); updateBroker(); });
+$("sp").addEventListener("input",()=>{ ls("sp_"+cur,$("sp").value.trim()); updateBroker(); });
+$("bclear").addEventListener("click",()=>{ $("bp").value=""; $("sp").value=""; ls("bp_"+cur,""); ls("sp_"+cur,""); updateBroker(); });
 
-function setTab(sym){
-  cur = sym; seq++; last = null; $("bp").value = ls("bp_"+sym); $("brokercard").hidden = true;
-  history.replaceState(null,"","#"+sym.toLowerCase());
+function switchView(sym, tf){
+  cur = sym; curTF = tf; seq++; last = null; lastConfirm = null;
+  $("bp").value = ls("bp_"+sym); $("sp").value = ls("sp_"+sym); $("brokercard").hidden = true;
+  history.replaceState(null,"","#"+sym.toLowerCase()+"-"+tf.toLowerCase());
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===sym));
+  document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===tf));
   $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>';
   ["sumcard","indcard","histcard"].forEach(i=>$(i).hidden=true);
   $("err").hidden = true; $("src").textContent = ""; $("stat").textContent = "menghubungkan…";
   load();
 }
-document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>setTab(b.dataset.sym)));
+document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>switchView(b.dataset.sym, curTF)));
+document.querySelectorAll(".tf").forEach(b=>b.addEventListener("click",()=>switchView(cur, b.dataset.tf)));
 
 function tick(){
   if(!last) return;
   const dot=$("dot"), age = last.updated_at ? Math.round((new Date(last.now) - new Date(last.updated_at))/60000 + (Date.now()-lastFetch)/60000) : null;
-  const stale = age!=null && age > last.update_minutes*3;
+  const every = Math.max(1, Math.round((last.update_seconds||900)/60)), stale = age!=null && age > every*3 + 2;
   dot.className = "dot" + (last.error ? " err" : stale ? " stale" : "");
   $("stat").textContent = age==null ? "menunggu data pertama" :
-    `diperbarui ${age<1?"baru saja":age+" menit lalu"} · otomatis tiap ${last.update_minutes} menit` + (stale?" · data mungkin basi":"");
+    `diperbarui ${age<1?"baru saja":age+" menit lalu"} · otomatis tiap ${every} menit` + (stale?" · data mungkin basi":"");
 }
 
 let lastFetch = Date.now();
@@ -260,22 +311,27 @@ function renderHistory(sig){
   const rows = [];
   if(A) rows.push({time:A.time, direction:A.direction, entry:A.levels.entry, outcome:"ACTIVE", tp_hit:A.tp_hit});
   if(tr) rows.push(...tr.recent);
-  $("histcard").hidden = !rows.length;
+  const st = tr && tr.stats;
+  $("histcard").hidden = !rows.length && !(st && st.total);
+  $("stats").textContent = !st ? "" : st.total === 0 ? "Belum ada sinyal yang selesai pada data ini." :
+    `Dalam data ±${st.days} hari (${st.total} sinyal selesai): ${st.sl_first} kena SL sebelum TP1 (${Math.round(st.sl_first/st.total*100)}%), ${st.tp1plus} mencapai TP1 atau lebih (${st.tp3} sampai TP3), ${st.no_result} tanpa hasil (kedaluwarsa atau berbalik). Setelah SL, sinyal arah sama diblokir ${st.cooldown_bars} candle. Ini hasil data lalu, bukan jaminan ke depan.`;
   $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fmt(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
 }
 async function load(){
-  const my = seq, sym = cur;
+  const my = seq, sym = cur, tf = curTF;
   try{
-    const r = await fetch("/api/signal?symbol="+sym,{cache:"no-store"}); const j = await r.json();
+    const r = await fetch(`/api/signal?symbol=${sym}&tf=${tf}`,{cache:"no-store"}); const j = await r.json();
     if(my!==seq) return;               // pengguna sudah pindah tab
     last = j; lastFetch = Date.now(); render(last);
     renderHistory(j.signal);
+    loadConfirm(my);
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
 }
 async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 30000 : 5000); }
 document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
-$("bp").value = ls("bp_"+cur);
+document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===curTF));
+$("bp").value = ls("bp_"+cur); $("sp").value = ls("sp_"+cur);
 cycle(); setInterval(tick, 15000);
 </script>
 </body>

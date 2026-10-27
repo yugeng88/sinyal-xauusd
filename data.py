@@ -1,4 +1,4 @@
-"""Pengambil data harga candle H1 dari sumber nyata untuk beberapa instrumen.
+"""Pengambil data candle dari sumber nyata untuk beberapa instrumen dan timeframe.
 
 Aturan: tidak pernah membuat data palsu. Jika semua sumber gagal,
 get_candles() melempar DataError dan aplikasi menampilkan pesan galat.
@@ -11,9 +11,23 @@ import time
 import pandas as pd
 import requests
 
-UA = {"User-Agent": "Mozilla/5.0 (compatible; sinyal-trading/2.0)"}
+UA = {"User-Agent": "Mozilla/5.0 (compatible; sinyal-trading/3.0)"}
 TIMEOUT = 8        # detik per permintaan
 BUDGET = 25        # detik total per siklus pengambilan data
+
+# Pengaturan per timeframe.
+#   minutes : panjang candle        expiry_h : umur maksimum sebuah sinyal
+#   stale_h : candle terakhir lebih tua dari ini = pasar dianggap tutup
+#   ttl     : jeda minimum (detik) antar pengambilan data
+#   size    : jumlah candle yang diminta (lebih banyak = statistik lebih berarti)
+TF = {
+    "M1":  dict(minutes=1,  td="1min",  yahoo=("1m", "5d"),   size=300,  expiry_h=0.0,  stale_h=0.15, chart=60, ttl=60),
+    "M5":  dict(minutes=5,  td="5min",  yahoo=("5m", "60d"),  size=1500, expiry_h=1.0,  stale_h=0.35, chart=60, ttl=120),
+    "M15": dict(minutes=15, td="15min", yahoo=("15m", "60d"), size=1500, expiry_h=3.0,  stale_h=0.75, chart=60, ttl=300),
+    "M30": dict(minutes=30, td="30min", yahoo=("30m", "60d"), size=1500, expiry_h=6.0,  stale_h=1.5,  chart=60, ttl=600),
+    "H1":  dict(minutes=60, td="1h",    yahoo=("60m", "60d"), size=500,  expiry_h=12.0, stale_h=3.0,  chart=48, ttl=900),
+}
+SIGNAL_TFS = ["M5", "M15", "M30", "H1"]      # yang bisa dipilih di dasbor (M1 khusus konfirmasi)
 
 NOTE_GC = "Futures emas (GC=F): harga bisa berbeda dari spot XAUUSD."
 NOTE_QQQ = ("Memakai ETF QQQ (pelacak Nasdaq-100): harga dalam USD per unit ETF, "
@@ -56,7 +70,7 @@ def _frame(rows):
     return df.reset_index(drop=True)
 
 
-def fetch_twelvedata(api_key, symbol, interval="1h", size=500):
+def fetch_twelvedata(api_key, symbol, interval, size):
     r = requests.get(
         "https://api.twelvedata.com/time_series",
         params={"symbol": symbol, "interval": interval, "outputsize": size,
@@ -71,7 +85,7 @@ def fetch_twelvedata(api_key, symbol, interval="1h", size=500):
     return _frame(rows), f"Twelve Data {symbol}"
 
 
-def fetch_yahoo(symbol, interval="60m", rng="60d"):
+def fetch_yahoo(symbol, interval, rng):
     r = requests.get(
         f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
         params={"interval": interval, "range": rng},
@@ -92,14 +106,18 @@ def fetch_yahoo(symbol, interval="60m", rng="60d"):
     return _frame(rows), f"Yahoo Finance {symbol}"
 
 
-def get_candles(key):
-    """Kembalikan (DataFrame candle H1, nama sumber, catatan atau None)."""
+def get_candles(key, tf="H1"):
+    """Kembalikan (DataFrame candle, nama sumber, catatan atau None)."""
     cfg = SYMBOLS.get(key)
     if cfg is None:
         raise DataError(f"Instrumen tidak dikenal: {key}")
+    t = TF.get(tf)
+    if t is None:
+        raise DataError(f"Timeframe tidak dikenal: {tf}")
     td_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
     start = time.monotonic()
     errors = []
+    min_rows = 150 if tf != "M1" else 60
     for provider, sym, note in cfg["candidates"]:
         if time.monotonic() - start > BUDGET:
             errors.append("waktu habis, sumber berikutnya dilewati")
@@ -108,10 +126,10 @@ def get_candles(key):
             if provider == "td":
                 if not td_key:
                     continue
-                df, src = fetch_twelvedata(td_key, sym)
+                df, src = fetch_twelvedata(td_key, sym, t["td"], t["size"])
             else:
-                df, src = fetch_yahoo(sym)
-            if len(df) >= 150:
+                df, src = fetch_yahoo(sym, *t["yahoo"])
+            if len(df) >= min_rows:
                 return df, src, note
             errors.append(f"{src}: candle terlalu sedikit ({len(df)})")
         except Exception as e:  # noqa: BLE001
