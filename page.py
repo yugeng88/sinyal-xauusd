@@ -130,7 +130,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 6 · harga bisa diselaraskan ke broker/TradingView</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 7 · konfirmasi M1 untuk XAUUSD dan NASDAQ, sumber data OANDA opsional</p>
 </main>
 
 <script>
@@ -211,7 +211,7 @@ function render(s){
     ${sig.note?`<div class="note-box">${esc(sig.note)}</div>`:""}
     <div class="chart">${chartSVG(sig)}</div>
     ${L?`<div class="legend"><span><i style="background:#8b93b3"></i>Entry</span><span><i style="background:#f87171"></i>Stop loss</span><span><i style="background:#4ade80"></i>Take profit</span></div>`:""}
-    ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">${closed?"Pasar tampaknya tutup.":"Belum ada setup yang cukup selaras."} Tidak ada level entry saat ini.</p>`}
+    ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">${closed?"Pasar tampaknya tutup.":"Belum ada setup yang cukup selaras."} Tidak ada level entry saat ini.<br><small>Kotak konfirmasi M1 akan muncul di sini begitu ada sinyal BUY atau SELL aktif.</small></p>`}
     <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan${A?" (saat terbit)":""}</span><b>${conf}%</b></div>
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
     <p class="note">Keselarasan indikator${A?"":" (skor "+(sig.score>0?"+":"")+sig.score+" dari ±"+sig.max_score+")"}, bukan peluang profit.</p></div>`;

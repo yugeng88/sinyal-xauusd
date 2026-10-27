@@ -6,6 +6,7 @@ Bila yang terpakai adalah pengganti (proxy) dari instrumen asli, catatannya
 dikembalikan dan ditampilkan di dasbor.
 """
 import os
+import re
 import time
 
 import pandas as pd
@@ -61,13 +62,78 @@ class DataError(Exception):
     pass
 
 
+def scrub(msg):
+    """Hapus kunci API/token dari teks galat sebelum ditampilkan di dasbor."""
+    msg = re.sub(r"(apikey=)[^&\s)\"']+", r"\1***", str(msg), flags=re.I)
+    msg = re.sub(r"(Bearer\s+)[A-Za-z0-9._\-]+", r"\1***", msg, flags=re.I)
+    return msg
+
+
+OANDA_INST = {"XAUUSD": "XAU_USD", "NASDAQ": "NAS100_USD"}
+OANDA_GRAN = {"M1": "M1", "M5": "M5", "M15": "M15", "M30": "M30", "H1": "H1"}
+
+
+def fetch_oanda(token, instrument, gran, count, env="practice"):
+    """Candle CFD dari OANDA (akun demo gratis). Jalan hampir 24 jam, tanpa kuota harian ketat."""
+    host = "api-fxtrade.oanda.com" if env == "live" else "api-fxpractice.oanda.com"
+    r = requests.get(f"https://{host}/v3/instruments/{instrument}/candles",
+                     params={"granularity": gran, "count": min(int(count), 5000), "price": "M"},
+                     headers={**UA, "Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
+    try:
+        j = r.json()
+    except ValueError:
+        raise DataError(f"OANDA {instrument}: HTTP {r.status_code}, respons bukan JSON")
+    if r.status_code != 200 or "candles" not in j:
+        raise DataError(f"OANDA {instrument}: {j.get('errorMessage', 'HTTP ' + str(r.status_code))}")
+    rows = [(c["time"], c["mid"]["o"], c["mid"]["h"], c["mid"]["l"], c["mid"]["c"])
+            for c in j["candles"] if "mid" in c]
+    return _frame(rows), f"OANDA {instrument}"
+
+
 def candidates_for(key):
     """Urutan sumber. NASDAQ_SOURCE=futures: utamakan futures NQ=F (hampir 24 jam,
     lebih mirip CFD NAS100 di broker daripada indeks tunai yang hanya jam bursa AS)."""
     cands = list(SYMBOLS[key]["candidates"])
     if key == "NASDAQ" and os.getenv("NASDAQ_SOURCE", "").strip().lower() == "futures":
         cands.sort(key=lambda c: 0 if c[1] == "NQ=F" else 1)
+    if os.getenv("OANDA_TOKEN", "").strip() and key in OANDA_INST:
+        cands.insert(0, ("oanda", OANDA_INST[key], None))
     return cands
+
+
+def fetch_one(provider, sym, tf):
+    """Ambil satu sumber. Dipakai get_candles() dan diagnosis."""
+    t = TF[tf]
+    if provider == "oanda":
+        tok = os.getenv("OANDA_TOKEN", "").strip()
+        if not tok:
+            raise DataError("OANDA: OANDA_TOKEN belum diisi")
+        return fetch_oanda(tok, sym, OANDA_GRAN[tf], t["size"], os.getenv("OANDA_ENV", "practice").strip().lower())
+    if provider == "td":
+        k = os.getenv("TWELVEDATA_API_KEY", "").strip()
+        if not k:
+            raise DataError("Twelve Data: TWELVEDATA_API_KEY belum diisi")
+        return fetch_twelvedata(k, sym, t["td"], t["size"])
+    return fetch_yahoo(sym, *t["yahoo"])
+
+
+def diagnose(key, tf):
+    """Coba SEMUA sumber untuk satu instrumen/timeframe dan laporkan hasilnya (untuk pemecahan masalah)."""
+    out = []
+    for provider, sym, note in candidates_for(key):
+        t0 = time.monotonic()
+        row = {"provider": provider, "symbol": sym, "proxy": bool(note)}
+        try:
+            df, src = fetch_one(provider, sym, tf)
+            last = df.iloc[-1]["time"]
+            age = (pd.Timestamp.now(tz="UTC") - last).total_seconds() / 60
+            row.update(ok=True, rows=len(df), last_candle=last.isoformat(), age_minutes=round(age, 1),
+                       last_close=round(float(df.iloc[-1]["close"]), 2))
+        except Exception as e:  # noqa: BLE001
+            row.update(ok=False, error=scrub(e))
+        row["ms"] = round((time.monotonic() - t0) * 1000)
+        out.append(row)
+    return out
 
 
 def _frame(rows):
@@ -117,30 +183,25 @@ def fetch_yahoo(symbol, interval, rng):
 
 def get_candles(key, tf="H1"):
     """Kembalikan (DataFrame candle, nama sumber, catatan atau None)."""
-    cfg = SYMBOLS.get(key)
-    if cfg is None:
+    if key not in SYMBOLS:
         raise DataError(f"Instrumen tidak dikenal: {key}")
-    t = TF.get(tf)
-    if t is None:
+    if tf not in TF:
         raise DataError(f"Timeframe tidak dikenal: {tf}")
-    td_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
     start = time.monotonic()
     errors = []
     min_rows = 150 if tf != "M1" else 60
+    has_td = bool(os.getenv("TWELVEDATA_API_KEY", "").strip())
     for provider, sym, note in candidates_for(key):
         if time.monotonic() - start > BUDGET:
             errors.append("waktu habis, sumber berikutnya dilewati")
             break
+        if provider == "td" and not has_td:
+            continue
         try:
-            if provider == "td":
-                if not td_key:
-                    continue
-                df, src = fetch_twelvedata(td_key, sym, t["td"], t["size"])
-            else:
-                df, src = fetch_yahoo(sym, *t["yahoo"])
+            df, src = fetch_one(provider, sym, tf)
             if len(df) >= min_rows:
                 return df, src, note
             errors.append(f"{src}: candle terlalu sedikit ({len(df)})")
         except Exception as e:  # noqa: BLE001
-            errors.append(str(e))
+            errors.append(scrub(e))
     raise DataError(" | ".join(errors) or "Semua sumber data gagal")

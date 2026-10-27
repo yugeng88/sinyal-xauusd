@@ -112,7 +112,7 @@ def _refresh(sym, tf):
         sig["tracking"] = signals.track(df, tf=tf)
     except Exception as e:  # noqa: BLE001
         with lock:
-            st["error"] = f"{type(e).__name__}: {e}"
+            st["error"] = data.scrub(f"{type(e).__name__}: {e}")
         return
     summary = claude_narrative(sig) or signals.summary_text(sig)
     with lock:
@@ -146,7 +146,7 @@ def get_m1(sym):
             df, src, _ = data.get_candles(sym, "M1")
             c.update(df=df, source=src, at=now(), error=None)
         except Exception as e:  # noqa: BLE001
-            c.update(at=now(), error=f"{type(e).__name__}: {e}")
+            c.update(at=now(), error=data.scrub(f"{type(e).__name__}: {e}"))
         finally:
             m1_busy[sym].release()
     return c
@@ -229,6 +229,24 @@ def api_quote():
     fetched = (now() - c["at"]).total_seconds() if c["at"] else 0.0       # umur cache server
     return jsonify(price=round(float(last["close"]), 2), time=last["time"].isoformat(),
                    source=c["source"], age_seconds=round(lag + fetched), error=c["error"])
+
+
+_diag_cache = {}
+
+
+@app.get("/api/diag")
+def api_diag():
+    """Diagnosis sumber data: sumber mana yang berhasil/gagal, jumlah candle, dan umur candle terakhir."""
+    sym, tf = (request.args.get("symbol") or "NASDAQ").upper(), (request.args.get("tf") or "M1").upper()
+    if sym not in SYMS or tf not in data.TF:
+        return jsonify(error="Instrumen atau timeframe tidak dikenal"), 404
+    k = (sym, tf)
+    hit = _diag_cache.get(k)
+    if hit and (now() - hit[0]).total_seconds() < 60:      # cegah penyalahgunaan: maksimal 1 kali/menit
+        return jsonify(symbol=sym, tf=tf, cached=True, sources=hit[1])
+    rows = data.diagnose(sym, tf)
+    _diag_cache[k] = (now(), rows)
+    return jsonify(symbol=sym, tf=tf, cached=False, sources=rows)
 
 
 @app.get("/healthz")
