@@ -79,6 +79,19 @@ h2{font-size:15px;margin-bottom:8px}
 .calbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#10142a}
 .calbox h3{font-size:14px;margin:0 0 4px}.calbox .brow{margin:8px 0}
 .offchip{font-size:12px;color:var(--wait);margin-top:4px}
+body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard, body.onnews #histcard, body.onnews #brokercard{display:none !important}
+#newsview{display:none} body.onnews #newsview{display:grid;gap:14px}
+.evs{display:flex;flex-wrap:wrap;gap:6px}
+.ev{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:600 12px var(--font);cursor:pointer;text-align:left;line-height:1.35}
+.ev.sel{color:var(--text);border-color:#4a5688;background:#171c35}.ev small{display:block;font-weight:500;color:var(--mute)}
+.ev.PASCA,.ev.RILIS{border-color:#6b5a1f}.ev.SELESAI{opacity:.6}
+.cd{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin:6px 0}
+.pill{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mute)}
+.pill.PRA{color:#7aa2ff;border-color:#35508f}.pill.RILIS{color:var(--sell);border-color:#6b2a2a}.pill.PASCA{color:var(--wait);border-color:#6b5a1f}
+.sigbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px}
+.sigbox .dir{font-size:20px;font-weight:700}.sigbox ul{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:#d6daee}
+.mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.mini div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}.mini small{display:block;color:var(--mute);font-size:11.5px}.mini b{font-size:15px;font-variant-numeric:tabular-nums}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -90,6 +103,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <div class="tabs" role="tablist" aria-label="Pilih instrumen">
     <button class="tab" role="tab" id="tab-XAUUSD" data-sym="XAUUSD">XAUUSD</button>
     <button class="tab" role="tab" id="tab-NASDAQ" data-sym="NASDAQ">NASDAQ</button>
+    <button class="tab" role="tab" id="tab-NEWS" data-sym="NEWS">NEWS</button>
   </div>
   <div class="tfs" role="tablist" aria-label="Pilih timeframe">
     <button class="tf" role="tab" data-tf="M5">M5</button>
@@ -98,6 +112,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <button class="tf" role="tab" data-tf="H1">H1</button>
   </div>
   <div id="err" class="card error" hidden></div>
+  <section id="newsview"></section>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
   </section>
@@ -130,7 +145,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 7 · konfirmasi M1 untuk XAUUSD dan NASDAQ, sumber data OANDA opsional</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 8 · tab NEWS XAUUSD (FOMC, NFP, CPI, PCE)</p>
 </main>
 
 <script>
@@ -138,7 +153,7 @@ const $ = id => document.getElementById(id);
 const fmt = (n, d=2) => n == null ? "–" : Number(n).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let last = null;
-const SYMS = ["XAUUSD","NASDAQ"];
+const SYMS = ["XAUUSD","NASDAQ","NEWS"];
 const TFS = ["M5","M15","M30","H1"];
 const [h1_, h2_] = location.hash.replace("#","").toUpperCase().split("-");
 let cur = SYMS.includes(h1_) ? h1_ : "XAUUSD";
@@ -336,7 +351,78 @@ async function calibrate(){
 $("calbtn").addEventListener("click", calibrate);
 $("cal").addEventListener("keydown", e=>{ if(e.key==="Enter") calibrate(); });
 
+let newsId = null, newsDelay = 20000, newsData = null;
+const WIB = {timeZone:"Asia/Jakarta"};
+const wibFull = iso => new Date(iso).toLocaleString("id-ID",{...WIB,weekday:"long",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":")+" WIB";
+const wibShort = iso => new Date(iso).toLocaleString("id-ID",{...WIB,day:"numeric",month:"short",hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":");
+const utcTxt = iso => iso.slice(5,16).replace("T"," ")+" UTC";
+const sgn = x => x==null ? "–" : (x>0?"+":"")+fmt(x);
+const STATUS = {PRA:"SEBELUM RILIS", RILIS:"SEDANG RILIS", PASCA:"SETELAH RILIS", SELESAI:"SELESAI"};
+
+function countdownText(iso){
+  const s = Math.round((new Date(iso) - Date.now())/1000);
+  if(s > 0){ const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), x=s%60;
+    return (d?d+" hari ":"")+String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(x).padStart(2,"0"); }
+  const m = Math.floor(-s/60); return "rilis "+m+" menit lalu";
+}
+setInterval(()=>{ const e=$("cd"); if(e && e.dataset.t0) e.textContent = countdownText(e.dataset.t0); }, 1000);
+
+function renderNews(j){
+  const v = $("newsview");
+  if(!j.focus){ v.innerHTML = `<div class="card error">${esc(j.error||"Data berita belum tersedia.")}</div>`; return; }
+  const f = j.focus, s = f.signal || {}, st = f.study || {n:0}, pr = f.progress || {};
+  const offX = loadOff("XAUUSD"), px = x => x==null ? "–" : fmt(offX ? x + offX.v : x);
+  const evs = j.events.map(e=>`<button class="ev ${e.status} ${e.id===f.id?"sel":""}" data-id="${esc(e.id)}">${esc(e.short)}${e.confirmed?"":" ≈"}<small>${esc(wibShort(e.t0))} · ${STATUS[e.status]||""}</small></button>`).join("");
+  const dirCls = s.direction || "WAIT", dirTxt = s.direction==="WAIT"||!s.direction ? "TUNGGU" : s.direction;
+  const title = {PRA:"Sinyal sebelum news", RILIS:"Sedang rilis", PASCA:"Sinyal setelah rilis", SELESAI:"Berita selesai"}[s.kind||f.status] || "Sinyal";
+  const lv = s.levels ? `<div class="mini"><div><small>Entry</small><b>${px(s.levels.entry)}</b></div><div><small>Stop loss</small><b class="sl">${px(s.levels.stop_loss)}</b></div>
+      <div><small>TP1</small><b class="tp">${px(s.levels.tp1)}</b></div><div><small>TP2</small><b class="tp">${px(s.levels.tp2)}</b></div></div>
+      <p class="note" style="margin-top:6px">Jarak risiko ${fmt(s.levels.risk_points)} poin. Saat rilis, spread melebar dan slippage bisa membuat SL tereksekusi lebih jauh.</p>` : "";
+  const sd = s.straddle ? `<div class="mini"><div><small>Buy hanya bila M5 close di atas</small><b>${px(s.straddle.buy_above)}</b></div><div><small>Sell hanya bila M5 close di bawah</small><b>${px(s.straddle.sell_below)}</b></div></div>
+      <p class="note" style="margin-top:6px">${esc(s.straddle.note)} Gerak 60 menit yang biasa: ±${fmt(s.straddle.typical_move_60m)} poin.</p>` : "";
+  const reasons = (s.reasons||[]).map(r=>`<li>${esc(r)}</li>`).join("");
+  const fomc = f.type.startsWith("FOMC") ? `<p class="note" style="margin-top:10px"><b>FOMC punya dua sesi:</b> keputusan suku bunga pukul ${esc(wibShort(j.events.find(e=>e.type==="FOMC"&&e.date===f.date)?.t0 || f.t0).split(" ").pop())} WIB, lalu konferensi pers 30 menit sesudahnya. Konferensi pers sering membalik arah reaksi pertama, jadi dipelajari terpisah.</p>` : "";
+  let stats = "";
+  if(st.n){
+    const u = st.up60, rows = st.rows.map(r=>`<tr><td>${esc(r.date.slice(2))}</td><td>${sgn(r.r5)}</td><td>${sgn(r.r15)}</td><td>${sgn(r.r60)}</td><td>${fmt(r.up60+r.dn60)}</td></tr>`).join("");
+    stats = `<p class="statline">${st.n} kejadian terakhir. Harga naik di menit ke-60: ${u.k} dari ${u.n} (${Math.round(u.rate*100)}%, rentang 95%: ${Math.round(u.lo*100)}–${Math.round(u.hi*100)}%).
+      Gerak 15 menit yang biasa: ${fmt(st.med_abs_r15)} poin, rentang 60 menit: ${fmt(st.med_range60)} poin.
+      ${st.cont.n?`Reaksi besar lanjut searah: ${st.cont.k} dari ${st.cont.n}. `:""}${st.fade5.n?`Arah 5 menit pertama berbalik di menit ke-60: ${st.fade5.k} dari ${st.fade5.n}.`:""}
+      ${st.enough?"":`<br><b style="color:var(--wait)">Riwayat belum cukup (minimal 6), statistik ini belum dipakai untuk sinyal arah.</b>`}</p>
+      <table class="hist"><thead><tr><th>Tanggal</th><th>5m</th><th>15m</th><th>60m</th><th>Rentang</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="note" style="margin-top:6px">Angka dalam poin XAUUSD dari harga tepat sebelum rilis.</p>`;
+  }
+  const prog = (pr.total && pr.done < pr.total) ? `<p class="note">Mengambil riwayat harga: ${pr.done} dari ${pr.total}${pr.wait_seconds?` (menunggu kuota per menit ±${pr.wait_seconds} detik)`:""}…${pr.error?`<br><span style="color:var(--sell)">${esc(pr.error)}</span>`:""}</p>
+      <div class="bar"><div style="width:${Math.round(pr.done/pr.total*100)}%"></div></div>` : "";
+  v.innerHTML = `
+    <div class="evs">${evs}</div>
+    <section class="card">
+      <div class="top"><div><h1 style="font-size:19px">${esc(f.label)}</h1><div class="sub">${esc(wibFull(f.t0))}<br>${esc(utcTxt(f.t0))}${f.confirmed?"":" · tanggal perkiraan"}</div></div><span class="pill ${f.status}">${STATUS[f.status]}</span></div>
+      <div class="cd" id="cd" data-t0="${esc(f.t0)}">${esc(countdownText(f.t0))}</div>
+      <div class="sub">XAUUSD ${f.live_price!=null?`<b style="color:var(--text)">${px(f.live_price)}</b>`:"(harga belum tersedia)"}${f.h1_label?` · tren H1: ${esc(f.h1_label)}`:""}${offX?` · disesuaikan ke broker (${sgn(offX.v)})`:""}</div>
+      <div class="sigbox"><div class="dir ${dirCls}">${esc(title)}: ${dirTxt}${s.strength?` (${esc(s.strength)})`:""}${s.confidence?` · batas bawah kepercayaan ${s.confidence}%`:""}</div><ul>${reasons}</ul>${lv}${sd}</div>
+      ${fomc}
+    </section>
+    <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
+    <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
+      Sinyal berita adalah ringkasan statistik riwayat dan bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
+  v.querySelectorAll(".ev").forEach(b=>b.addEventListener("click",()=>{ newsId = b.dataset.id; loadNews(); }));
+  $("src").textContent = "Sumber harga: " + (j.source||"–");
+}
+async function loadNews(){
+  const my = seq;
+  try{
+    const r = await fetch("/api/news"+(newsId?"?id="+encodeURIComponent(newsId):""),{cache:"no-store"}); const j = await r.json();
+    if(my!==seq || cur!=="NEWS") return;
+    newsData = j; $("err").hidden = true; renderNews(j);
+    const pr = j.focus && j.focus.progress;
+    newsDelay = pr && pr.total && pr.done < pr.total ? (pr.wait_seconds ? Math.min(pr.wait_seconds+2,40)*1000 : 3000) : 30000;
+    $("dot").className = "dot"; $("stat").textContent = "diperbarui " + new Date().toLocaleTimeString("id-ID",{...WIB,hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":") + " WIB";
+  }catch(e){ if(my===seq){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; newsDelay = 10000; } }
+}
+
 function switchView(sym, tf){
+  document.body.classList.toggle("onnews", sym==="NEWS");
   cur = sym; curTF = tf; seq++; last = null; lastConfirm = null; OFF = loadOff(sym); calMsg = ""; renderCal();
   $("bp").value = ls("bp_"+sym); $("sp").value = ls("sp_"+sym); $("brokercard").hidden = true;
   history.replaceState(null,"","#"+sym.toLowerCase()+"-"+tf.toLowerCase());
@@ -345,6 +431,7 @@ function switchView(sym, tf){
   $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>';
   ["sumcard","indcard","histcard"].forEach(i=>$(i).hidden=true);
   $("err").hidden = true; $("src").textContent = ""; $("stat").textContent = "menghubungkan…";
+  if(sym==="NEWS"){ history.replaceState(null,"","#news"); seq++; $("newsview").innerHTML = '<div class="card empty">Mengambil jadwal dan riwayat berita…</div>'; loadNews(); return; }
   load();
 }
 document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>switchView(b.dataset.sym, curTF)));
@@ -372,6 +459,7 @@ function renderHistory(sig){
   $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fp(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
 }
 async function load(){
+  if(cur==="NEWS"){ await loadNews(); return; }
   const my = seq, sym = cur, tf = curTF;
   try{
     const r = await fetch(`/api/signal?symbol=${sym}&tf=${tf}`,{cache:"no-store"}); const j = await r.json();
@@ -382,7 +470,8 @@ async function load(){
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
 }
-async function cycle(){ await load(); setTimeout(cycle, (last && last.signal) ? 30000 : 5000); }
+async function cycle(){ await load(); setTimeout(cycle, cur==="NEWS" ? newsDelay : ((last && last.signal) ? 30000 : 5000)); }
+document.body.classList.toggle("onnews", cur==="NEWS");
 document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
 document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===curTF));
 $("bp").value = ls("bp_"+cur); $("sp").value = ls("sp_"+cur);

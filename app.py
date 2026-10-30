@@ -15,6 +15,7 @@ import requests
 from flask import Flask, Response, jsonify, request
 
 import data
+import news
 import page
 import signals
 
@@ -27,6 +28,7 @@ app = Flask(__name__, static_folder=None)
 lock = threading.Lock()
 busy = {(s, t): threading.Lock() for s in SYMS for t in TFS}
 narrative_cache = {}
+raw = {}            # (instrumen, tf) -> candle terbaru (untuk modul news)
 
 
 def new_state():
@@ -110,6 +112,7 @@ def _refresh(sym, tf):
         sig = signals.analyze(df, source, symbol=sym, label=data.SYMBOLS[sym]["label"],
                               note=note, tf=tf)
         sig["tracking"] = signals.track(df, tf=tf)
+        raw[(sym, tf)] = df.tail(400)
     except Exception as e:  # noqa: BLE001
         with lock:
             st["error"] = data.scrub(f"{type(e).__name__}: {e}")
@@ -229,6 +232,57 @@ def api_quote():
     fetched = (now() - c["at"]).total_seconds() if c["at"] else 0.0       # umur cache server
     return jsonify(price=round(float(last["close"]), 2), time=last["time"].isoformat(),
                    source=c["source"], age_seconds=round(lag + fetched), error=c["error"])
+
+
+def news_view(ev_id=None, now=None):
+    """Susun data halaman NEWS: daftar berita, studi riwayat jenis berita terpilih, dan sinyal."""
+    ts = now or pd.Timestamp.now(tz="UTC")
+    extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
+    evs = news.build_events(ts.to_pydatetime(), extra)
+    focus = next((e for e in evs if e["id"] == ev_id), None) or news.pick_focus(evs)
+    ensure_fresh("XAUUSD", "M5")
+    ensure_fresh("XAUUSD", "H1")
+    m5 = raw.get(("XAUUSD", "M5"))
+    h1 = states[("XAUUSD", "H1")]["signal"]
+    typ = focus["type"]
+    dates = news.past_dates(typ, ts.to_pydatetime())
+    fam = news.TYPES[typ]["family"]
+    per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
+    prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min)
+    if prog.get("error"):
+        prog["error"] = data.scrub(prog["error"])
+    summ = news.study(typ, dates)
+    t0 = pd.Timestamp(focus["t0"])
+    live = None if m5 is None else float(m5["close"].iloc[-1])
+    ctx = h1["direction"] if h1 and not h1.get("market_closed") else None
+    out_focus = {**focus, "study": summ, "progress": prog, "live_price": live, "ctx_h1": ctx,
+                 "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})"}
+    if focus["status"] == "PRA":
+        pre = m5[(m5["time"] >= t0 - pd.Timedelta(minutes=60)) & (m5["time"] < t0)] if m5 is not None else None
+        hi = None if pre is None or len(pre) < 6 else float(pre["high"].max())
+        lo = None if pre is None or len(pre) < 6 else float(pre["low"].min())
+        out_focus["signal"] = news.pre_signal(summ, ctx, live, hi, lo)
+    elif focus["status"] in ("RILIS", "PASCA"):
+        bar = None if m5 is None else m5[m5["time"] == t0]
+        if bar is None or len(bar) == 0:
+            out_focus["signal"] = {"kind": "PASCA", "direction": "WAIT", "reasons": ["Candle M5 saat rilis belum tersedia di sumber data."]}
+        else:
+            out_focus["signal"] = news.post_signal(summ, float(bar["open"].iloc[0]), live, focus["minutes"])
+    else:
+        out_focus["signal"] = {"kind": "SELESAI", "direction": "WAIT", "reasons": ["Berita ini sudah selesai. Pilih berita berikutnya."]}
+    shown = [e for e in evs if e["status"] != "SELESAI"][:6] + [e for e in evs if e["status"] == "SELESAI"][-2:]
+    shown.sort(key=lambda e: e["t0"])
+    return {"now": ts.isoformat(), "events": shown, "focus": out_focus,
+            "source": None if m5 is None else (states[("XAUUSD", "M5")]["signal"] or {}).get("source"),
+            "error": states[("XAUUSD", "M5")]["error"]}
+
+
+@app.get("/api/news")
+def api_news():
+    try:
+        return jsonify(news_view(request.args.get("id")))
+    except Exception as e:  # noqa: BLE001
+        return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
 
 
 _diag_cache = {}

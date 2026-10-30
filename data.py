@@ -205,3 +205,56 @@ def get_candles(key, tf="H1"):
         except Exception as e:  # noqa: BLE001
             errors.append(scrub(e))
     raise DataError(" | ".join(errors) or "Semua sumber data gagal")
+
+
+# ------------------------------------------------- candle pada rentang waktu (studi news)
+def _fmt_td(ts):
+    return pd.Timestamp(ts).tz_convert("UTC").strftime("%Y-%m-%d %H:%M:%S")
+
+
+def fetch_twelvedata_range(api_key, symbol, interval, start, end):
+    r = requests.get(
+        "https://api.twelvedata.com/time_series",
+        params={"symbol": symbol, "interval": interval, "start_date": _fmt_td(start),
+                "end_date": _fmt_td(end), "outputsize": 5000, "timezone": "UTC", "apikey": api_key},
+        headers=UA, timeout=TIMEOUT,
+    )
+    j = r.json()
+    if j.get("status") == "error" or "values" not in j:
+        raise DataError(f"Twelve Data {symbol}: {j.get('message', 'respons tidak valid')}")
+    rows = [(v["datetime"], v["open"], v["high"], v["low"], v["close"]) for v in j["values"]]
+    return _frame(rows), f"Twelve Data {symbol}"
+
+
+def fetch_oanda_range(token, instrument, gran, start, end, env="practice"):
+    host = "api-fxtrade.oanda.com" if env == "live" else "api-fxpractice.oanda.com"
+    iso = lambda ts: pd.Timestamp(ts).tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%SZ")
+    r = requests.get(f"https://{host}/v3/instruments/{instrument}/candles",
+                     params={"granularity": gran, "from": iso(start), "to": iso(end), "price": "M"},
+                     headers={**UA, "Authorization": f"Bearer {token}"}, timeout=TIMEOUT)
+    try:
+        j = r.json()
+    except ValueError:
+        raise DataError(f"OANDA {instrument}: HTTP {r.status_code}, respons bukan JSON")
+    if r.status_code != 200 or "candles" not in j:
+        raise DataError(f"OANDA {instrument}: {j.get('errorMessage', 'HTTP ' + str(r.status_code))}")
+    rows = [(c["time"], c["mid"]["o"], c["mid"]["h"], c["mid"]["l"], c["mid"]["c"])
+            for c in j["candles"] if "mid" in c]
+    return _frame(rows), f"OANDA {instrument}"
+
+
+def get_range(key, tf, start, end):
+    """Candle pada rentang waktu tertentu (UTC). Hanya sumber yang mendukung rentang
+    (OANDA, Twelve Data). Yahoo tidak dipakai karena riwayat intradayanya pendek."""
+    errors = []
+    td_key = os.getenv("TWELVEDATA_API_KEY", "").strip()
+    for provider, sym, note in candidates_for(key):
+        try:
+            if provider == "oanda":
+                return fetch_oanda_range(os.getenv("OANDA_TOKEN", "").strip(), sym, OANDA_GRAN[tf], start, end,
+                                         os.getenv("OANDA_ENV", "practice").strip().lower())[0]
+            if provider == "td" and td_key:
+                return fetch_twelvedata_range(td_key, sym, TF[tf]["td"], start, end)[0]
+        except Exception as e:  # noqa: BLE001
+            errors.append(scrub(e))
+    raise DataError(" | ".join(errors) or "Tidak ada sumber yang mendukung rentang waktu (butuh kunci Twelve Data atau OANDA)")
