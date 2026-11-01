@@ -4,6 +4,7 @@ Dua mode, kode sama:
 - Server biasa:  python app.py  -> thread latar belakang memperbarui H1 tiap UPDATE_MINUTES
 - Serverless (Vercel): data dihitung saat halaman meminta, dengan cache per timeframe
 """
+import hmac
 import json
 import os
 import threading
@@ -16,6 +17,7 @@ from flask import Flask, Response, jsonify, request
 
 import data
 import news
+import notify
 import page
 import signals
 
@@ -82,17 +84,6 @@ def claude_narrative(sig):
         return None
 
 
-def telegram(msg):
-    tok, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
-    if not (tok and chat):
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
-                      json={"chat_id": chat, "text": msg}, timeout=15)
-    except Exception:  # noqa: BLE001
-        pass
-
-
 def refresh(sym, tf):
     """Satu siklus untuk satu instrumen dan timeframe."""
     if not busy[(sym, tf)].acquire(blocking=False):
@@ -121,14 +112,44 @@ def _refresh(sym, tf):
     with lock:
         prev = st["signal"]
         st.update(signal=sig, summary=summary, error=None, updated_at=now().isoformat())
-    new_a = sig["tracking"]["active"]
-    old_a = prev["tracking"]["active"] if prev else None
-    if new_a and (old_a is None or old_a["time"] != new_a["time"]):
-        lv = new_a["levels"]
-        telegram(f"{sig['label']} {tf}: sinyal {new_a['direction']} "
-                 f"(keyakinan {new_a['confidence']}%)\n"
-                 f"Entry {lv['entry']} | SL {lv['stop_loss']} | TP {lv['tp']}\n"
-                 "Cek konfirmasi M1 di dasbor. Bukan saran investasi.")
+    maybe_notify_signal(sym, tf, sig)
+
+
+def tf_minutes(tf):
+    return data.TF[tf]["minutes"]
+
+
+_sent_log = []                 # notifikasi yang terkirim sejak putaran cron terakhir (untuk ringkasan)
+_app_url = {"v": ""}
+
+
+@app.before_request
+def _remember_host():
+    if not _app_url["v"] and request.host_url:
+        _app_url["v"] = request.host_url.rstrip("/")
+
+
+def app_url():
+    return (os.getenv("APP_URL", "").strip() or _app_url["v"]).rstrip("/") or None
+
+
+def _drain():
+    out = list(_sent_log)
+    _sent_log.clear()
+    return out
+
+
+def maybe_notify_signal(sym, tf, sig, click=None):
+    """Notifikasi sinyal baru: sekali per sinyal, hanya bila masih segar dan pasar buka."""
+    a = sig["tracking"]["active"] if sig.get("tracking") else None
+    if not a or sig.get("market_closed") or a["age_hours"] * 60 > max(3 * tf_minutes(tf), 15):
+        return None
+    title, msg = notify.signal_message(sig["label"], tf, a, notify.offset(sym))
+    tag = "chart_with_upwards_trend" if a["direction"] == "BUY" else "chart_with_downwards_trend"
+    r = notify.deliver(f"sig:{sym}:{tf}:{a['time']}", title, msg, 4, [tag], click or app_url())
+    if r is not None:
+        _sent_log.append({"jenis": "sinyal", "target": f"{sym}:{tf}", "hasil": r})
+    return r
 
 
 def ensure_fresh(sym, tf):
@@ -178,14 +199,21 @@ def api_signal():
     if sym is None:
         return jsonify(error="Instrumen atau timeframe tidak dikenal",
                        symbols=SYMS, timeframes=TFS), 404
-    ensure_fresh(sym, tf)
+    if request.args.get("force") == "1":
+        with lock:
+            la = states[(sym, tf)]["last_attempt"]
+        if la is None or (now() - datetime.fromisoformat(la)).total_seconds() > 45:
+            refresh(sym, tf)
+    else:
+        ensure_fresh(sym, tf)
     with lock:
         s = dict(states[(sym, tf)])
     nxt = None
     if s["last_attempt"]:
         nxt = (datetime.fromisoformat(s["last_attempt"])
                + timedelta(seconds=ttl_seconds(tf))).isoformat()
-    s.update(symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
+    s.update(notify={"channels": notify.channels(), "last_cron": _last_cron["at"]},
+             symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
              now=now().isoformat())
     return jsonify(s)
 
@@ -277,10 +305,137 @@ def news_view(ev_id=None, now=None):
             "error": states[("XAUUSD", "M5")]["error"]}
 
 
+@app.get("/api/news/events")
+def api_news_events():
+    ts = pd.Timestamp.now(tz="UTC")
+    extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
+    return jsonify(now=ts.isoformat(), events=news.build_events(ts.to_pydatetime(), extra))
+
+
 @app.get("/api/news")
 def api_news():
     try:
         return jsonify(news_view(request.args.get("id")))
+    except Exception as e:  # noqa: BLE001
+        return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
+
+
+_last_cron = {"at": None}
+
+
+def parse_targets(raw):
+    out = []
+    for part in (raw or "XAUUSD:M15,NASDAQ:M15").split(","):
+        s, _, t = part.strip().upper().partition(":")
+        if s in SYMS and t in TFS and (s, t) not in out:
+            out.append((s, t))
+    return out
+
+
+def compute_confirm(sym, a):
+    c = get_m1(sym)
+    if c["df"] is None:
+        return None
+    return signals.confirm_m1(c["df"], a["direction"], a["levels"], pd.Timestamp(a["time_close"]),
+                              now=pd.Timestamp.now(tz="UTC"))
+
+
+def cron_run(ts=None, click=None):
+    """Satu putaran pemeriksaan (dipanggil tiap menit oleh penjadwal luar). Idempotent."""
+    ts = ts or pd.Timestamp.now(tz="UTC")
+    if not notify.channels():
+        return {"error": "Belum ada kanal notifikasi. Isi NTFY_TOPIC (atau token Telegram) di Vercel."}
+    _drain()
+    sent, notes = [], []
+    over = data.credits_used() >= int(os.getenv("DAILY_CREDIT_CAP", "700"))
+    for sym, tf in parse_targets(os.getenv("NOTIFY_TARGETS")):
+        st = states[(sym, tf)]
+        closed = bool(st["signal"] and st["signal"].get("market_closed"))
+        gap = 1800 if closed else (60 if st["error"] else ttl_seconds(tf))
+        la = st["last_attempt"]
+        if la is None or (now() - datetime.fromisoformat(la)).total_seconds() > gap:
+            if over:
+                notes.append(f"kuota Twelve Data hari ini {data.credits_used()}: {sym} {tf} dilewati")
+            else:
+                refresh(sym, tf)
+        sig = st["signal"]
+        if sig:
+            maybe_notify_signal(sym, tf, sig, click)
+        sent.extend(_drain())
+        if not sig:
+            continue
+        a = sig["tracking"]["active"] if sig.get("tracking") else None
+        ck = f"cfm:{sym}:{tf}:{a['time']}" if a else None
+        if a and not sig.get("market_closed") and not over and not notify.seen(ck):
+            c = compute_confirm(sym, a)
+            if c and c.get("state") == "CONFIRMED":
+                title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym))
+                r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], click)
+                if r is not None:
+                    sent.append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
+    extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
+    evs = news.build_events(ts.to_pydatetime(), extra)
+    pre_min = int(os.getenv("NEWS_PRE_MIN", "30"))
+    off = notify.offset("XAUUSD")
+    nxt = [e for e in evs if e["status"] == "PRA"][:1]
+    if nxt and -nxt[0]["minutes"] <= 36 * 60 and not over:       # hangatkan riwayat sebelum rilis
+        typ = nxt[0]["type"]
+        per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
+        news.ensure_windows(news.TYPES[typ]["family"], news.past_dates(typ, ts.to_pydatetime()),
+                            lambda x, y: data.get_range("XAUUSD", "M5", x, y), per_minute=per_min)
+    for ev in evs:
+        if over or ev["status"] not in ("PRA", "PASCA"):
+            continue
+        left = -ev["minutes"]
+        if ev["status"] == "PRA" and left <= pre_min:
+            k30, k5, ksig = f"nwr30:{ev['id']}", f"nwr5:{ev['id']}", f"nwp:{ev['id']}"
+            stage = "5" if left <= 5 else "30"
+            if notify.seen(k5 if stage == "5" else k30):
+                continue
+            v = news_view(ev["id"], now=ts)["focus"]
+            if stage == "30" and v["progress"]["done"] < v["progress"]["total"] and left > 6:
+                notes.append(f"{ev['short']}: riwayat belum lengkap ({v['progress']['done']}/{v['progress']['total']}), menunggu")
+                continue
+            s = v["signal"]
+            directional = s["direction"] in ("BUY", "SELL")
+            title, msg = notify.news_pre_message(ev, s, left, off)
+            claim = k5 if stage == "5" else k30
+            r = notify.deliver(claim, title, msg, 4 if directional else 3,
+                               ["chart_with_upwards_trend" if directional else "bell"], click)
+            if r is not None:
+                if directional:
+                    notify.once(ksig)
+                sent.append({"jenis": f"news_pra_{stage}", "target": ev["id"], "hasil": r})
+        elif ev["status"] == "PASCA":
+            key = f"nwq:{ev['id']}"
+            if notify.seen(key):
+                continue
+            v = news_view(ev["id"], now=ts)["focus"]
+            s = v["signal"]
+            if s.get("direction") in ("BUY", "SELL"):
+                title, msg = notify.news_post_message(ev, s, off)
+                r = notify.deliver(key, title, msg, 5, ["rotating_light"], click)
+                if r is not None:
+                    sent.append({"jenis": "news_pasca", "target": ev["id"], "hasil": r})
+    _last_cron["at"] = ts.isoformat()
+    return {"ran": ts.isoformat(), "channels": notify.channels(), "targets": [f"{s}:{t}" for s, t in parse_targets(os.getenv("NOTIFY_TARGETS"))],
+            "sent": sent, "notes": notes, "credits_today": data.credits_used()}
+
+
+@app.get("/api/cron")
+def api_cron():
+    secret = os.getenv("CRON_SECRET", "").strip()
+    if not secret:
+        return jsonify(error="CRON_SECRET belum diisi di Vercel"), 403
+    if not hmac.compare_digest((request.args.get("key") or "").encode(), secret.encode()):
+        return jsonify(error="kunci salah"), 403
+    click = (os.getenv("APP_URL", "").strip() or request.host_url).rstrip("/")
+    try:
+        if request.args.get("test"):
+            res = notify.send("Tes notifikasi sinyal", "Jika pesan ini muncul di iPhone Anda, notifikasi sudah aktif.",
+                              3, ["white_check_mark"], click)
+            return jsonify(test=True, channels=notify.channels(), results=res)
+        return jsonify(cron_run(click=click))
     except Exception as e:  # noqa: BLE001
         return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
 

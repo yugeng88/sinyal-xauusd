@@ -1,0 +1,191 @@
+"""Notifikasi sinyal dan news ke iPhone: ntfy (disarankan, tanpa daftar akun) dan/atau Telegram.
+
+Pengaturan lewat Environment Variables di Vercel:
+  NTFY_TOPIC            nama topik ntfy (acak dan panjang, anggap sebagai kata sandi)
+  NTFY_SERVER           bawaan https://ntfy.sh
+  NTFY_TOKEN            opsional, bila topik dilindungi
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID    alternatif/tambahan
+  OFFSET_XAUUSD, OFFSET_NASDAQ            selisih harga broker minus data aplikasi (poin)
+  UPSTASH_REDIS_REST_URL/TOKEN (atau KV_REST_API_URL/TOKEN)   opsional: cegah notifikasi dobel
+"""
+import os
+import time
+from datetime import datetime, timedelta
+
+import requests
+
+TIMEOUT = 10
+_mem = {}              # cadangan anti-dobel bila Redis tidak ada: key -> waktu kedaluwarsa
+DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"]
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
+
+def _scrub(msg):
+    import data
+    return data.scrub(msg)
+
+
+def channels():
+    ch = []
+    if os.getenv("NTFY_TOPIC", "").strip():
+        ch.append("ntfy")
+    if os.getenv("TELEGRAM_BOT_TOKEN", "").strip() and os.getenv("TELEGRAM_CHAT_ID", "").strip():
+        ch.append("telegram")
+    return ch
+
+
+def offset(sym):
+    try:
+        return float(os.getenv(f"OFFSET_{sym}", "0") or 0)
+    except ValueError:
+        return 0.0
+
+
+# ---------------------------------------------------------------- anti-dobel
+def _redis():
+    url = (os.getenv("UPSTASH_REDIS_REST_URL") or os.getenv("KV_REST_API_URL") or "").strip()
+    tok = (os.getenv("UPSTASH_REDIS_REST_TOKEN") or os.getenv("KV_REST_API_TOKEN") or "").strip()
+    return (url, tok) if url and tok else None
+
+
+def _rcall(cmd):
+    url, tok = _redis()
+    r = requests.post(url, headers={"Authorization": f"Bearer {tok}"}, json=cmd, timeout=TIMEOUT)
+    j = r.json()
+    if "result" not in j:
+        raise ValueError(str(j.get("error", "respons Redis tidak dikenal")))
+    return j["result"]
+
+
+def seen(key):
+    """Sudah pernah dikirim? (baca saja, tidak menandai)"""
+    if _redis():
+        try:
+            return _rcall(["EXISTS", "sinyal:" + key]) == 1
+        except Exception:  # noqa: BLE001
+            pass
+    return _mem.get(key, 0) > time.time()
+
+
+def once(key, ttl=172800):
+    """True hanya pada pemanggilan pertama untuk key ini (atomik di Redis bila tersedia)."""
+    if _redis():
+        try:
+            return _rcall(["SET", "sinyal:" + key, "1", "NX", "EX", int(ttl)]) == "OK"
+        except Exception:  # noqa: BLE001
+            pass                                   # Redis bermasalah: jatuh ke memori
+    t = time.time()
+    for k in [k for k, v in _mem.items() if v <= t]:
+        del _mem[k]
+    if key in _mem:
+        return False
+    _mem[key] = t + ttl
+    return True
+
+
+def forget(key):
+    """Lepas tanda (dipakai bila pengiriman gagal di semua kanal, supaya dicoba lagi)."""
+    _mem.pop(key, None)
+    if _redis():
+        try:
+            _rcall(["DEL", "sinyal:" + key])
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def deliver(key, title, message, priority=3, tags=(), click=None):
+    """once() + send() + coba lagi pada tick berikutnya bila semua kanal gagal. None = sudah pernah/dilewati."""
+    if not channels() or not once(key):
+        return None
+    res = send(title, message, priority, tags, click)
+    if res and not any(r["ok"] for r in res):
+        forget(key)
+    return res
+
+
+# -------------------------------------------------------------------- kirim
+def send(title, message, priority=3, tags=(), click=None):
+    """Kirim ke semua kanal yang aktif. Kembalikan hasil per kanal (galat sudah disamarkan)."""
+    out = []
+    topic = os.getenv("NTFY_TOPIC", "").strip()
+    if topic:
+        try:
+            server = (os.getenv("NTFY_SERVER", "") or "https://ntfy.sh").strip().rstrip("/")
+            body = {"topic": topic, "title": title, "message": message,
+                    "priority": int(priority), "tags": list(tags)}
+            if click:
+                body["click"] = click
+            headers = {"Content-Type": "application/json"}
+            if os.getenv("NTFY_TOKEN", "").strip():
+                headers["Authorization"] = "Bearer " + os.getenv("NTFY_TOKEN").strip()
+            r = requests.post(server, json=body, headers=headers, timeout=TIMEOUT)
+            out.append({"channel": "ntfy", "ok": r.status_code == 200,
+                        "error": None if r.status_code == 200 else f"HTTP {r.status_code}"})
+        except Exception as e:  # noqa: BLE001
+            out.append({"channel": "ntfy", "ok": False, "error": _scrub(e)})
+    tok, chat = os.getenv("TELEGRAM_BOT_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if tok and chat:
+        try:
+            r = requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
+                              json={"chat_id": chat, "text": f"{title}\n{message}",
+                                    "disable_web_page_preview": True}, timeout=TIMEOUT)
+            out.append({"channel": "telegram", "ok": r.status_code == 200,
+                        "error": None if r.status_code == 200 else f"HTTP {r.status_code}"})
+        except Exception as e:  # noqa: BLE001
+            out.append({"channel": "telegram", "ok": False, "error": _scrub(e)})
+    return out
+
+
+# ------------------------------------------------------------------- pesan
+def fp(x, off=0.0):
+    return f"{x + off:,.2f}"
+
+
+def wib(iso):
+    t = datetime.fromisoformat(iso) + timedelta(hours=7)
+    return f"{DAYS[t.weekday()]} {t.day} {MONTHS[t.month - 1]} {t:%H:%M} WIB"
+
+
+def signal_message(label, tf, a, off=0.0):
+    lv = a["levels"]
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
+    return (f"{label} {tf} · {a['direction']}",
+            f"Sinyal baru (keyakinan {a['confidence']}%)\n"
+            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)}\n{tps}\n"
+            "Tunggu konfirmasi M1 sebelum masuk. Bukan saran investasi.")
+
+
+def confirm_message(label, tf, a, c, off=0.0):
+    lv = a["levels"]
+    since = f"\nPertama terkonfirmasi {c['first_time'][11:16]} UTC di sekitar {fp(c['first_price'], off)}." if c.get("first_time") else ""
+    return (f"{label} {tf} · {a['direction']} TERKONFIRMASI M1",
+            f"Harga M1 {fp(c['price'], off)} (di zona entry).\n"
+            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp'][0], off)}{since}\n"
+            "Bukan saran investasi.")
+
+
+def news_pre_message(ev, sig, minutes_left, off=0.0):
+    head = f"{ev['short']} {minutes_left:.0f} menit lagi · {wib(ev['t0'])}"
+    lines = []
+    if sig["direction"] in ("BUY", "SELL"):
+        lv = sig["levels"]
+        lines.append(f"Sinyal pra-news: {sig['direction']} ({(sig.get('strength') or '').lower()}, keyakinan {sig['confidence']}%)")
+        if lv:
+            lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
+    else:
+        lines.append("Belum ada bias arah: TUNGGU reaksi.")
+    st = sig.get("straddle")
+    if st:
+        lines.append(f"Zona breakout: di atas {fp(st['buy_above'], off)} atau di bawah {fp(st['sell_below'], off)} "
+                     f"(gerak umum 60 menit ±{st['typical_move_60m']:.0f} poin).")
+    lines.append("Spread melebar saat rilis. Bukan saran investasi.")
+    return head, "\n".join(lines)
+
+
+def news_post_message(ev, sig, off=0.0):
+    lv = sig["levels"]
+    mv = sig["reaction"]["move"]
+    return (f"{ev['short']} · reaksi {sig['direction']}",
+            f"Gerak sejak rilis {mv:+.2f} poin, searah pola riwayat (keyakinan {sig['confidence']}%).\n"
+            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}\n"
+            "Bukan saran investasi.")

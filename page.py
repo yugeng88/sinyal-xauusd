@@ -145,7 +145,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 8 · tab NEWS XAUUSD (FOMC, NFP, CPI, PCE)</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 9 · notifikasi sinyal dan news (opsional)</p>
 </main>
 
 <script>
@@ -443,7 +443,8 @@ function tick(){
   const every = Math.max(1, Math.round((last.update_seconds||900)/60)), stale = age!=null && age > every*3 + 2;
   dot.className = "dot" + (last.error ? " err" : stale ? " stale" : "");
   $("stat").textContent = age==null ? "menunggu data pertama" :
-    `diperbarui ${age<1?"baru saja":age+" menit lalu"} · otomatis tiap ${every} menit` + (stale?" · data mungkin basi":"");
+    `diperbarui ${age<1?"baru saja":age+" menit lalu"} · otomatis tiap ${every} menit` + (stale?" · data mungkin basi":"")
+    + (last.notify && last.notify.channels.length ? " · notifikasi " + last.notify.channels.join("+") + (last.notify.last_cron ? (()=>{ const m = Math.round((Date.now()-new Date(last.notify.last_cron))/60000); return m>10 ? ` (penjadwal terakhir ${m} menit lalu, cek cron-job.org)` : " aktif"; })() : " (belum ada penjadwal)") : "");
 }
 
 let lastFetch = Date.now();

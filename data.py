@@ -66,7 +66,24 @@ def scrub(msg):
     """Hapus kunci API/token dari teks galat sebelum ditampilkan di dasbor."""
     msg = re.sub(r"(apikey=)[^&\s)\"']+", r"\1***", str(msg), flags=re.I)
     msg = re.sub(r"(Bearer\s+)[A-Za-z0-9._\-]+", r"\1***", msg, flags=re.I)
+    msg = re.sub(r"(bot\d+:)[A-Za-z0-9_\-]+", r"\1***", msg)
     return msg
+
+
+_credits = {"day": None, "n": 0}
+
+
+def credits_used():
+    """Perkiraan jumlah permintaan Twelve Data hari ini (per proses server)."""
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if _credits["day"] != today:
+        _credits.update(day=today, n=0)
+    return _credits["n"]
+
+
+def _count_credit():
+    credits_used()
+    _credits["n"] += 1
 
 
 OANDA_INST = {"XAUUSD": "XAU_USD", "NASDAQ": "NAS100_USD"}
@@ -146,6 +163,7 @@ def _frame(rows):
 
 
 def fetch_twelvedata(api_key, symbol, interval, size):
+    _count_credit()
     r = requests.get(
         "https://api.twelvedata.com/time_series",
         params={"symbol": symbol, "interval": interval, "outputsize": size,
@@ -213,6 +231,7 @@ def _fmt_td(ts):
 
 
 def fetch_twelvedata_range(api_key, symbol, interval, start, end):
+    _count_credit()
     r = requests.get(
         "https://api.twelvedata.com/time_series",
         params={"symbol": symbol, "interval": interval, "start_date": _fmt_td(start),
