@@ -49,6 +49,9 @@ def change_24h(df):
 def split_closed(df, now, minutes=60):
     """Pisahkan candle yang sudah tertutup dari candle yang masih berjalan."""
     last = df.iloc[-1]
+    feed = df.attrs.get("data_time")              # waktu transaksi terakhir di sumber data (Yahoo telat ~10 menit untuk futures)
+    if feed is not None and pd.Timestamp(feed) < now:
+        now = pd.Timestamp(feed)
     if last["time"] + pd.Timedelta(minutes=minutes) > now:
         return df.iloc[:-1], last
     return df, None

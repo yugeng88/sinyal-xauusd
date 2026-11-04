@@ -6,6 +6,7 @@ Dua mode, kode sama:
 """
 import hmac
 import json
+import math
 import os
 import threading
 import time
@@ -212,10 +213,37 @@ def api_signal():
     if s["last_attempt"]:
         nxt = (datetime.fromisoformat(s["last_attempt"])
                + timedelta(seconds=ttl_seconds(tf))).isoformat()
-    s.update(notify={"channels": notify.channels(), "last_cron": last_cron()},
+    s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
+                     "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
              symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
              now=now().isoformat())
     return jsonify(s)
+
+
+@app.post("/api/offset")
+def api_offset():
+    """Simpan penyesuaian harga dari dasbor supaya notifikasi ntfy memakai angka yang sama."""
+    j = request.get_json(silent=True) or {}
+    sym = str(j.get("symbol") or "").upper()
+    if sym not in SYMS:
+        return jsonify(saved=False, error="Instrumen tidak dikenal"), 404
+    v, t = j.get("v"), j.get("t") or time.time() * 1000
+    try:
+        t = int(float(t))
+        if v is not None:
+            v = float(v)
+            if not math.isfinite(v):
+                raise ValueError
+    except (TypeError, ValueError):
+        return jsonify(saved=False, error="Angka tidak valid"), 400
+    if v is not None:
+        with lock:
+            ref = next((st["signal"]["price"] for (s, _), st in states.items()
+                        if s == sym and st["signal"] and st["signal"].get("price")), None)
+        if abs(v) > (0.03 * ref if ref else 3000):
+            return jsonify(saved=False, error="Selisih terlalu besar (lebih dari 3%)"), 400
+    ok = notify.set_offset(sym, v, t)
+    return jsonify(saved=ok, shared=bool(notify._redis()), offset=notify.offset_record(sym))
 
 
 @app.get("/api/confirm")

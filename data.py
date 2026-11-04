@@ -232,7 +232,13 @@ def fetch_yahoo(symbol, interval, rng):
     ts = res.get("timestamp") or []
     rows = list(zip(pd.to_datetime(ts, unit="s", utc=True),
                     q["open"], q["high"], q["low"], q["close"]))
-    return _frame(rows), f"Yahoo Finance {symbol}"
+    df = _frame(rows)
+    mt = (res.get("meta") or {}).get("regularMarketTime")
+    if mt:
+        # Data Yahoo untuk futures (GC=F, NQ=F) tertunda ~10 menit. Candle baru dianggap tutup
+        # setelah data penyedia melewati jam tutupnya, supaya sinyal tidak dihitung dari candle setengah jadi.
+        df.attrs["data_time"] = pd.Timestamp(int(mt), unit="s", tz="UTC")
+    return df, f"Yahoo Finance {symbol}"
 
 
 def get_candles(key, tf="H1"):

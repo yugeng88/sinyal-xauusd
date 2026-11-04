@@ -8,6 +8,7 @@ Pengaturan lewat Environment Variables di Vercel:
   OFFSET_XAUUSD, OFFSET_NASDAQ            selisih harga broker minus data aplikasi (poin)
   UPSTASH_REDIS_REST_URL/TOKEN (atau KV_REST_API_URL/TOKEN)   opsional: cegah notifikasi dobel
 """
+import json
 import os
 import time
 from datetime import datetime, timedelta
@@ -34,7 +35,48 @@ def channels():
     return ch
 
 
+_off_cache = {}       # sym -> (waktu baca, rekaman)
+
+
+def offset_record(sym):
+    """Penyesuaian harga yang diatur dari dasbor (tombol Samakan), disimpan di Redis: {"v", "t"} atau None."""
+    if not _redis():
+        return None
+    hit = _off_cache.get(sym)
+    if hit and time.time() - hit[0] < 30:
+        return hit[1]
+    rec = None
+    try:
+        raw = _rcall(["GET", "sinyal:offset:" + sym])
+        if raw:
+            j = json.loads(raw)
+            rec = {"v": None if j.get("v") is None else float(j["v"]), "t": int(j.get("t") or 0)}
+    except Exception:  # noqa: BLE001
+        rec = hit[1] if hit else None
+    _off_cache[sym] = (time.time(), rec)
+    return rec
+
+
+def set_offset(sym, v, t):
+    """Simpan penyesuaian dari dasbor. v=None berarti dimatikan. True bila tersimpan bersama."""
+    if not _redis():
+        return False
+    rec = {"v": None if v is None else round(float(v), 2), "t": int(t)}
+    try:
+        _rcall(["SET", "sinyal:offset:" + sym, json.dumps(rec)])
+    except Exception:  # noqa: BLE001
+        return False
+    _off_cache[sym] = (time.time(), rec)
+    return True
+
+
 def offset(sym):
+    """Dipakai di pesan notifikasi. Utamakan nilai dari dasbor, lalu OFFSET_<SYM> di Vercel."""
+    rec = offset_record(sym)
+    if rec and rec["v"] is not None:
+        return rec["v"]
+    if rec and rec["v"] is None and rec["t"]:
+        return 0.0                                  # sengaja dimatikan dari dasbor
     try:
         return float(os.getenv(f"OFFSET_{sym}", "0") or 0)
     except ValueError:

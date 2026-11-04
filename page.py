@@ -145,7 +145,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 11 · notifikasi sinyal dan news (opsional)</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 12 · notifikasi sinyal dan news (opsional)</p>
 </main>
 
 <script>
@@ -161,6 +161,7 @@ let curTF = TFS.includes(h2_) ? h2_ : "H1";
 let seq = 0, lastConfirm = null;
 function loadOff(sym){ try{ const j = JSON.parse(ls("cal_"+sym)||"null"); return j && isFinite(j.v) ? j : null; }catch(e){ return null; } }
 let OFF = null;                                   // diisi setelah ls() siap (lihat bawah)
+let SHARED = null;                                // true = penyesuaian juga dipakai notifikasi ntfy (Redis terpasang)
 const adj = x => (OFF && x!=null) ? x + OFF.v : x;
 const fp = (x,d=2) => fmt(adj(x),d);
 
@@ -322,8 +323,28 @@ function renderCal(){
   out.innerHTML = calMsg + `<p class="note"><b>Aktif:</b> semua harga digeser ${OFF.v>0?"+":""}${fmt(OFF.v)} poin (broker/TV − data aplikasi), dikalibrasi ${mins<1?"baru saja":mins+" menit lalu"}.
     ${OFF.age>120?`<br>Saat itu data M1 tertinggal ${Math.round(OFF.age/60)} menit, jadi selisih bisa meleset sebesar pergerakan harga selama itu.`:""}
     ${old?`<br><span style="color:var(--wait)">Kalibrasi sudah lama. Ulangi bila selisih berubah (mis. pergantian kontrak atau spread melebar).</span>`:""}
+    ${SHARED===true?'<br><span style="color:var(--buy)">Notifikasi ntfy ikut memakai penyesuaian ini.</span>':""}
+    ${SHARED===false?'<br><span style="color:var(--wait)">Notifikasi ntfy BELUM ikut disesuaikan: penyimpanan bersama (Upstash Redis) belum dipasang di Vercel.</span>':""}
     <br><button id="caloff" type="button" style="margin-top:6px;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:600 13px var(--font)">Matikan penyesuaian</button></p>`;
-  $("caloff").addEventListener("click",()=>{ OFF = null; calMsg = ""; ls("cal_"+cur,""); repaint(); });
+  $("caloff").addEventListener("click",()=>{ OFF = null; calMsg = ""; ls("cal_"+cur,""); const t = Date.now(); ls("caloff_t_"+cur, String(t)); saveOffServer(cur, null, t); repaint(); });
+}
+function saveOffServer(sym, rec, t){
+  if(SHARED===false) return;
+  fetch("/api/offset",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({symbol:sym, v: rec ? rec.v : null, t: rec ? rec.t : (t||Date.now())})})
+    .then(r=>r.json()).then(j=>{ SHARED = !!j.shared; renderCal(); }).catch(()=>{});
+}
+function syncOffset(sym, n){
+  // Dasbor dan notifikasi memakai penyesuaian yang sama; yang terbaru (HP mana pun) yang dipakai.
+  if(!n) return;
+  SHARED = !!n.shared;
+  if(!SHARED){ renderCal(); return; }
+  const srv = n.offset, lt = OFF ? OFF.t : (Number(ls("caloff_t_"+sym))||0);
+  if(srv && srv.t > lt){
+    if(srv.v == null){ if(OFF){ OFF = null; ls("cal_"+sym,""); ls("caloff_t_"+sym, String(srv.t)); repaint(); } }
+    else if(!OFF || OFF.v !== srv.v){ OFF = {v:srv.v, t:srv.t, age:0, src:"server"}; ls("cal_"+sym, JSON.stringify(OFF)); repaint(); }
+  } else if(OFF && (!srv || srv.t < OFF.t || srv.v !== OFF.v)){ saveOffServer(sym, OFF); }
+  else renderCal();
 }
 function repaint(){
   if(last && last.signal){ render(last); renderHistory(last.signal); }
@@ -343,7 +364,7 @@ async function calibrate(){
     const d = p - q.price, pct = Math.abs(d/q.price)*100;
     if(pct > 2){ say(`<p class="warn">Selisih ${pct.toFixed(1)}% terlalu besar. Kemungkinan instrumennya berbeda (mis. sumber data memakai ETF atau futures), jadi penyesuaian tidak diterapkan. Cek kolom Sumber di bagian bawah.</p>`); return; }
     OFF = {v: Math.round(d*100)/100, t: Date.now(), age: q.age_seconds, src: q.source, price: q.price};
-    ls("cal_"+cur, JSON.stringify(OFF));
+    ls("cal_"+cur, JSON.stringify(OFF)); saveOffServer(cur, OFF);
     $("cal").value = ""; calMsg = "";
     repaint();
   }catch(e){ say('<p class="warn">Tidak bisa menghubungi server.</p>'); }
@@ -467,6 +488,7 @@ async function load(){
     if(my!==seq) return;               // pengguna sudah pindah tab
     last = j; lastFetch = Date.now(); render(last);
     renderHistory(j.signal);
+    syncOffset(sym, j.notify);
     loadConfirm(my);
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
