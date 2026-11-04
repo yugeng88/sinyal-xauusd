@@ -145,7 +145,8 @@ def maybe_notify_signal(sym, tf, sig, click=None):
     a = sig["tracking"]["active"] if sig.get("tracking") else None
     if not a or sig.get("market_closed") or a["age_hours"] * 60 > max(3 * tf_minutes(tf), 15):
         return None
-    title, msg = notify.signal_message(sig["label"], tf, a, notify.offset(sym))
+    off = 0.0 if sig.get("broker_native") else notify.offset(sym)       # harga MT5 sudah harga broker
+    title, msg = notify.signal_message(sig["label"], tf, a, off)
     tag = "chart_with_upwards_trend" if a["direction"] == "BUY" else "chart_with_downwards_trend"
     r = notify.deliver(f"sig:{sym}:{tf}:{a['time']}", title, msg, 4, [tag], click or app_url())
     if r is not None:
@@ -200,6 +201,14 @@ def api_signal():
     if sym is None:
         return jsonify(error="Instrumen atau timeframe tidak dikenal",
                        symbols=SYMS, timeframes=TFS), 404
+    native = mt5_signal(sym, tf)
+    if native:
+        s = {"signal": native["signal"], "summary": native.get("summary"), "updated_at": native.get("updated_at"),
+             "error": None, "last_attempt": native.get("updated_at")}
+        s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
+                         "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
+                 symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True)
+        return jsonify(s)
     if request.args.get("force") == "1":
         with lock:
             la = states[(sym, tf)]["last_attempt"]
@@ -252,6 +261,15 @@ def api_confirm():
     sym, tf = pick()
     if sym is None:
         return jsonify(error="Instrumen atau timeframe tidak dikenal"), 404
+    native = mt5_signal(sym, tf)
+    if native:
+        a = native["signal"]["tracking"]["active"] if native["signal"].get("tracking") else None
+        if not a:
+            return jsonify(confirm=None, symbol=sym, tf=tf)
+        c = mt5_confirm_get(sym, tf)
+        if not c or c.get("signal_time") != a["time"]:
+            c = {"state": "NODATA", "message": "Menunggu kiriman M1 berikutnya dari MT5 (paling lama 1 menit)."}
+        return jsonify(confirm=c, symbol=sym, tf=tf, signal_time=a["time"])
     with lock:
         sig = states[(sym, tf)]["signal"]
     a = sig["tracking"]["active"] if sig and sig.get("tracking") else None
@@ -412,7 +430,12 @@ def cron_run(ts=None, click=None):
         # Dulu: seluruh putaran cron berhenti (sinyal baru hanya muncul saat dasbor dibuka).
         # Sekarang: Twelve Data saja yang dilewati di data.get_candles, sumber cadangan tetap dipakai.
         notes.append(f"kuota Twelve Data hari ini tercapai ({data.credits_used()}/{data.credit_cap()}): memakai sumber cadangan")
+    live_mt5 = mt5_alive_map(force=True)
     for sym, tf in parse_targets(os.getenv("NOTIFY_TARGETS")):
+        if sym in live_mt5:
+            status.append({"target": f"{sym}:{tf}", "mt5": True,
+                           "note": "data langsung dari MT5: sinyal & notifikasi diurus /api/mt5"})
+            continue
         st = states[(sym, tf)]
         closed = bool(st["signal"] and st["signal"].get("market_closed"))
         la = st["last_attempt"]
@@ -491,13 +514,15 @@ def cron_run(ts=None, click=None):
                 if r is not None:
                     sent.append({"jenis": "news_pasca", "target": ev["id"], "hasil": r})
     _last_cron["at"] = ts.isoformat()
-    notify.kv_set("last_cron", ts.isoformat())             # terbaca juga oleh instance serverless lain
+    if time.time() - _cron_seen.get("w", 0) > 300:          # terbaca juga oleh instance lain; hemat kuota Redis
+        notify.kv_set("last_cron", ts.isoformat())
+        _cron_seen["w"] = time.time()
     return {"ran": ts.isoformat(), "channels": notify.channels(), "targets": [f"{s}:{t}" for s, t in parse_targets(os.getenv("NOTIFY_TARGETS"))],
             "refreshed": refreshed, "sent": sent, "notes": notes, "status": status,
             "credits_today": data.credits_used(), "credit_cap": data.credit_cap()}
 
 
-_cron_seen = {"at": None, "v": None}
+_cron_seen = {"at": None, "v": None, "w": 0}
 
 
 def last_cron():
@@ -527,6 +552,184 @@ def api_cron():
         return jsonify(cron_run(click=click))
     except Exception as e:  # noqa: BLE001
         return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
+
+
+# ------------------------------------------------------------------ MT5 (EA)
+MT5_FRESH = 180               # detik: kiriman EA lebih tua dari ini = MT5 dianggap mati, kembali ke sumber lama
+_mt5 = {"alive": {}, "alive_read": 0.0, "sig": {}, "cfm": {}, "cfm_state": {}}
+
+
+def mt5_alive_map(force=False):
+    """{simbol: waktu kiriman terakhir} untuk simbol yang MT5-nya masih mengirim data."""
+    t = time.time()
+    if force or t - _mt5["alive_read"] > 30:
+        raw_v = notify.kv_get("mt5:alive")
+        if raw_v:
+            try:
+                for k, v in json.loads(raw_v).items():
+                    _mt5["alive"][k] = max(float(v), _mt5["alive"].get(k, 0))
+            except (ValueError, TypeError, AttributeError):
+                pass
+        _mt5["alive_read"] = t
+    return {k: v for k, v in _mt5["alive"].items() if t - v < MT5_FRESH}
+
+
+def _mt5_frame(rows, data_time=None):
+    df = pd.DataFrame([r[:5] for r in rows], columns=["time", "open", "high", "low", "close"])
+    df["time"] = pd.to_datetime(df["time"].astype("int64"), unit="s", utc=True)
+    for c in ("open", "high", "low", "close"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df = df.dropna().drop_duplicates("time").sort_values("time").reset_index(drop=True)
+    if data_time is not None:
+        df.attrs["data_time"] = data_time
+    return df
+
+
+def _fresh_native(rec, tf):
+    if not rec or not rec.get("signal"):
+        return None
+    ct = pd.Timestamp(rec["signal"]["candle_time"])
+    return rec if pd.Timestamp.now(tz="UTC") - ct <= pd.Timedelta(minutes=3 * tf_minutes(tf) + 5) else None
+
+
+def mt5_signal(sym, tf):
+    """Sinyal yang dihitung dari candle MT5 (harga broker), atau None bila MT5 tidak aktif."""
+    if sym not in mt5_alive_map():
+        return None
+    rec = _mt5["sig"].get((sym, tf))
+    if rec and time.time() - rec.get("_read", 0) < 20:
+        return _fresh_native(rec, tf)
+    raw_v = notify.kv_get(f"mt5sig:{sym}:{tf}")
+    if raw_v:
+        try:
+            got = json.loads(raw_v)
+            if not rec or got.get("updated_at", "") >= rec.get("updated_at", ""):
+                rec = got
+        except ValueError:
+            pass
+    if rec:
+        rec["_read"] = time.time()
+        _mt5["sig"][(sym, tf)] = rec
+    return _fresh_native(rec, tf)
+
+
+def mt5_confirm_get(sym, tf):
+    c = _mt5["cfm"].get((sym, tf))
+    if c and time.time() - c.get("_read", 0) < 20:
+        return c
+    raw_v = notify.kv_get(f"mt5cfm:{sym}:{tf}")
+    if raw_v:
+        try:
+            c = json.loads(raw_v)
+            c["_read"] = time.time()
+            _mt5["cfm"][(sym, tf)] = c
+        except ValueError:
+            pass
+    return c
+
+
+def _jsonable(x):
+    return json.loads(json.dumps(x, default=str))
+
+
+@app.post("/api/mt5")
+def api_mt5():
+    """Diterima dari EA di MT5 (PC atau VPS). Sinyal dan notifikasi dihitung dari harga broker."""
+    secret = os.getenv("CRON_SECRET", "").strip()
+    j = request.get_json(silent=True, force=True) or {}
+    if not secret:
+        return jsonify(ok=False, error="CRON_SECRET belum diisi di Vercel"), 403
+    if not hmac.compare_digest(str(j.get("key") or "").encode(), secret.encode()):
+        return jsonify(ok=False, error="kunci salah (isi input Kunci di EA dengan CRON_SECRET)"), 403
+    try:
+        return jsonify(mt5_ingest(j))
+    except Exception as e:  # noqa: BLE001
+        return jsonify(ok=False, error=data.scrub(f"{type(e).__name__}: {e}")), 500
+
+
+def mt5_ingest(j):
+    t_now = time.time()
+    sent = float(j.get("sent") or t_now)
+    if abs(sent - t_now) > 600:
+        sent = t_now                                   # jam PC/VPS ngaco: pakai jam server
+    feed_time = pd.Timestamp(sent, unit="s", tz="UTC")
+    out = {"ok": True, "computed": [], "sent": [], "notes": []}
+    m1s, alive, fresh = {}, {}, {}
+    for sym_in, blk in (j.get("symbols") or {}).items():
+        sym = str(sym_in).upper()
+        if sym not in SYMS or not isinstance(blk, dict):
+            out["notes"].append(f"{sym_in}: simbol tidak dikenal (pakai XAUUSD atau NASDAQ)")
+            continue
+        broker = str(blk.get("broker") or sym)[:40]
+        tfs = blk.get("tf") or {}
+        if not tfs:
+            continue
+        alive[sym] = sent
+        if tfs.get("M1"):
+            m1 = _mt5_frame(tfs["M1"], feed_time)
+            if len(m1):
+                m1s[sym] = m1
+        for tf in TFS:
+            rows = tfs.get(tf)
+            if not rows:
+                continue
+            df = _mt5_frame(rows, feed_time)
+            if len(df) < 130:
+                out["notes"].append(f"{sym} {tf}: candle hanya {len(df)}, butuh minimal 130 (naikkan JumlahBar di EA)")
+                continue
+            sig = signals.analyze(df, f"MT5 {broker}", symbol=sym, label=data.SYMBOLS[sym]["label"], tf=tf)
+            sig["tracking"] = signals.track(df, tf=tf)
+            sig.update(broker_native=True, broker_symbol=broker)
+            sig = _jsonable(sig)
+            rec = {"signal": sig, "summary": signals.summary_text(sig), "updated_at": now().isoformat()}
+            with lock:
+                states[(sym, tf)].update(signal=sig, summary=rec["summary"], error=None,
+                                         updated_at=rec["updated_at"], last_attempt=rec["updated_at"])
+            raw[(sym, tf)] = df.tail(400)
+            _mt5["sig"][(sym, tf)] = {**rec, "_read": time.time()}
+            notify.kv_set(f"mt5sig:{sym}:{tf}", json.dumps(rec), ttl=6 * 3600)
+            fresh[(sym, tf)] = rec
+            act = (sig.get("tracking") or {}).get("active")
+            out["computed"].append(f"{sym}:{tf} " + (f"{act['direction']} aktif" if act else sig["direction"]))
+    if alive:
+        _mt5["alive"].update(alive)
+        merged = {k: v for k, v in _mt5["alive"].items() if t_now - v < MT5_FRESH}
+        notify.kv_set("mt5:alive", json.dumps(merged), ttl=MT5_FRESH)
+    # notifikasi & konfirmasi M1 untuk target yang simbolnya dikirim EA
+    targets = [(s, t) for s, t in parse_targets(os.getenv("NOTIFY_TARGETS")) if s in alive]
+    need = [(s, t) for s, t in targets if (s, t) not in fresh and not _fresh_native(_mt5["sig"].get((s, t)), t)]
+    for (s, t), raw_v in zip(need, notify.kv_mget([f"mt5sig:{s}:{t}" for s, t in need])):
+        if raw_v:
+            try:
+                _mt5["sig"][(s, t)] = {**json.loads(raw_v), "_read": time.time()}
+            except ValueError:
+                pass
+    _drain()
+    for sym, tf in targets:
+        rec = fresh.get((sym, tf)) or _fresh_native(_mt5["sig"].get((sym, tf)), tf)
+        if not rec:
+            continue
+        sig = rec["signal"]
+        maybe_notify_signal(sym, tf, sig, app_url())
+        out["sent"].extend(_drain())
+        a = sig["tracking"]["active"] if sig.get("tracking") else None
+        if not a or sig.get("market_closed") or sym not in m1s:
+            continue
+        ck = f"cfm:{sym}:{tf}:{a['time']}"
+        c = signals.confirm_m1(m1s[sym], a["direction"], a["levels"], pd.Timestamp(a["time_close"]), now=feed_time)
+        c = _jsonable({**c, "source": f"MT5 {sig.get('broker_symbol', sym)}", "signal_time": a["time"]})
+        st_key = (c.get("state"), c.get("m1_time"))
+        if _mt5["cfm_state"].get((sym, tf)) != st_key:
+            _mt5["cfm_state"][(sym, tf)] = st_key
+            _mt5["cfm"][(sym, tf)] = {**c, "_read": time.time()}
+            notify.kv_set(f"mt5cfm:{sym}:{tf}", json.dumps(c), ttl=6 * 3600)
+        if c.get("state") == "CONFIRMED" and not notify.seen(ck):
+            title, msg = notify.confirm_message(sig["label"], tf, a, c, 0.0)
+            r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], app_url())
+            if r is not None:
+                out["sent"].append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
+    out["alive"] = sorted(alive)
+    return out
 
 
 _diag_cache = {}

@@ -134,6 +134,17 @@ def kv_set(key, value, ttl=172800):
             pass
 
 
+def kv_mget(keys):
+    """Baca beberapa nilai sekaligus (1 perintah Redis). Kembalikan list sepanjang keys."""
+    if not keys or not _redis():
+        return [None] * len(keys)
+    try:
+        out = _rcall(["MGET", *["sinyal:" + k for k in keys]])
+        return list(out) if isinstance(out, list) else [None] * len(keys)
+    except Exception:  # noqa: BLE001
+        return [None] * len(keys)
+
+
 def kv_get(key):
     if _redis():
         try:

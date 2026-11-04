@@ -95,7 +95,7 @@ def credits_used():
     if _credits["day"] != today:
         _credits.update(day=today, n=0, sync=0.0)
     kv = _kv()
-    if kv and time.time() - _credits["sync"] > 60:
+    if kv and time.time() - _credits["sync"] > 300:
         try:
             _credits["n"] = max(_credits["n"], int(kv._rcall(["GET", "sinyal:credits:" + today]) or 0))
         except Exception:  # noqa: BLE001

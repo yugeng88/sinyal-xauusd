@@ -1,0 +1,84 @@
+PANDUAN MENGHUBUNGKAN MT5 KE APLIKASI SINYAL (Versi 13)
+=========================================================
+
+Cara kerja
+----------
+EA "SinyalMT5" berjalan di MT5 (PC/laptop atau VPS). Setiap candle M1 tutup,
+EA mengirim candle XAUUSD dan NAS100 dari broker kamu ke aplikasi. Aplikasi
+menghitung sinyal dari harga broker itu sendiri, lalu mengirim notifikasi ntfy.
+Tidak perlu tombol "Samakan" dan tidak ada keterlambatan 10 menit.
+
+Bila MT5/VPS mati lebih dari 3 menit, aplikasi otomatis kembali memakai
+sumber lama (Yahoo/Twelve Data + penyesuaian "Samakan").
+
+EA ini TIDAK membuka atau menutup order. Ia hanya membaca harga.
+
+
+A. UPLOAD FILE SERVER KE GITHUB
+-------------------------------
+Upload: app.py, data.py, notify.py, page.py, index.html
+Tunggu Vercel selesai deploy (Ready). Di bawah dasbor akan tertulis "Versi 13".
+
+
+B. PASANG EA DI PC/LAPTOP
+-------------------------
+1. Pasang MT5 versi desktop dari broker kamu, lalu login ke akun yang sama
+   dengan yang ada di HP (demo atau live).
+2. Di MT5: File > Open Data Folder > buka folder MQL5 > Experts.
+   Salin file SinyalMT5.mq5 ke folder itu.
+3. Tekan F4 (MetaEditor). Buka SinyalMT5.mq5, tekan F7 (Compile).
+   Pastikan di bawah tertulis "0 errors".
+4. Kembali ke MT5: Tools > Options > tab Expert Advisors.
+   Centang "Allow WebRequest for listed URL", lalu tambahkan:
+       https://sinyal-xauusd.vercel.app
+   Klik OK.
+5. Di Market Watch, catat nama simbol PERSIS untuk emas dan NAS100
+   (contoh: XAUUSD, XAUUSD., NAS100, NAS100.). Titik di belakang ikut dihitung.
+6. Buka chart apa saja (misalnya XAUUSD M1). Di Navigator > Expert Advisors,
+   seret SinyalMT5 ke chart. Di tab Inputs isi:
+       Kunci     = CRON_SECRET kamu (yang dipakai di cron-job.org)
+       SimbolXAU = nama simbol emas dari langkah 5
+       SimbolNAS = nama simbol NAS100 dari langkah 5
+   Klik OK.
+7. Dalam 1 menit, pojok kiri atas chart menampilkan "Status: OK ...".
+   Kalau tertulis "DITOLAK MT5", ulangi langkah 4.
+   Kalau "HTTP 403: kunci salah", periksa input Kunci.
+8. Atur PC supaya tidak sleep selama pasar buka, dan MT5 tetap terbuka.
+   Tombol "Algo Trading" tidak wajib menyala (EA tidak trading).
+
+
+C. PINDAHKAN KE VPS (supaya PC tidak perlu menyala)
+---------------------------------------------------
+Pilihan 1: VPS bawaan MT5 (MQL5 Virtual Hosting, berbayar bulanan)
+  1. Selesaikan bagian B dulu sampai status OK.
+  2. Di Navigator, klik kanan nama akun > Register a Virtual Server.
+     Pilih server terdekat dengan broker, pilih paket, bayar.
+  3. Pilih migrasi "Migrate experts and indicators" (sinkronkan EA).
+  4. Cek Journal VPS (Tools > Virtual Hosting / tab VPS > Journal):
+     harus ada SinyalMT5 berjalan tanpa error. Daftar WebRequest ikut
+     dipindahkan saat migrasi; bila muncul error 4014, migrasi ulang setelah
+     memastikan langkah B4 sudah benar.
+  5. Setelah VPS berjalan, lepas EA dari chart di PC (atau tutup MT5 di PC)
+     supaya data tidak terkirim dua kali.
+
+Pilihan 2: VPS Windows (misalnya VPS gratis dari broker)
+  Masuk ke VPS lewat Remote Desktop, lalu lakukan semua langkah bagian B
+  di VPS itu.
+
+
+D. CARA MEMASTIKAN SUDAH JALAN
+------------------------------
+- Dasbor tab NASDAQ/XAUUSD: muncul tulisan hijau
+  "Harga langsung dari MT5 kamu (...) · tidak perlu disamakan"
+  dan "Sumber: MT5 ..." di bagian bawah.
+- Notifikasi ntfy berikutnya: entry/SL/TP sama dengan harga di MT5.
+- Respons cron-job.org menulis "data langsung dari MT5" untuk simbol itu.
+
+
+Catatan
+-------
+- EA mengirim sekitar 140 KB saat candle besar (M5-H1) tutup, dan jauh lebih
+  kecil di menit lainnya. Cukup untuk internet biasa.
+- Akhir pekan dan saat pasar tutup, EA diam. Aplikasi memakai sumber lama.
+- Jangan bagikan CRON_SECRET. Siapa pun yang memilikinya bisa mengirim data
+  palsu ke aplikasi kamu.

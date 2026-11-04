@@ -144,7 +144,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 12 · notifikasi sinyal dan news (opsional)</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 13 · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -161,7 +161,8 @@ let seq = 0, lastConfirm = null;
 function loadOff(sym){ try{ const j = JSON.parse(ls("cal_"+sym)||"null"); return j && isFinite(j.v) ? j : null; }catch(e){ return null; } }
 let OFF = null;                                   // diisi setelah ls() siap (lihat bawah)
 let SHARED = null;                                // true = penyesuaian juga dipakai notifikasi ntfy (Redis terpasang)
-const adj = x => (OFF && x!=null) ? x + OFF.v : x;
+const NATIVE = () => !!(last && last.signal && last.signal.broker_native);   // harga langsung dari MT5: tanpa penyesuaian
+const adj = x => (OFF && x!=null && !NATIVE()) ? x + OFF.v : x;
 const fp = (x,d=2) => fmt(adj(x),d);
 
 function activeOf(sig){ return sig && sig.tracking ? sig.tracking.active : null; }
@@ -221,7 +222,8 @@ function render(s){
     <div class="top"><div><h1>${esc(sig.label || sig.symbol)}</h1><div class="sub">${esc(sig.timeframe)} · candle tertutup ${esc(sig.candle_time.slice(0,16).replace("T"," "))} UTC</div></div>
     <span class="badge ${badgeCls}">${badgeTxt}</span></div>
     <div class="price">${fp(live)}</div>
-    ${OFF?`<div class="offchip">Harga disesuaikan ke broker/TradingView (${OFF.v>0?"+":""}${fmt(OFF.v)} dari data aplikasi)</div>`:""}
+    ${sig.broker_native?`<div class="offchip" style="color:var(--buy)">Harga langsung dari MT5 kamu (${esc(sig.broker_symbol||"")}) · tidak perlu disamakan</div>`
+      :(OFF?`<div class="offchip">Harga disesuaikan ke broker/TradingView (${OFF.v>0?"+":""}${fmt(OFF.v)} dari data aplikasi)</div>`:"")}
     ${status}
     ${sig.note?`<div class="note-box">${esc(sig.note)}</div>`:""}
     <div class="chart">${chartSVG(sig)}</div>
@@ -316,6 +318,7 @@ $("bclear").addEventListener("click",()=>{ $("bp").value=""; $("sp").value=""; l
 let calMsg = "";
 function renderCal(){
   const out = $("calout"); if(!out) return;
+  if(NATIVE()){ out.innerHTML = '<p class="note" style="color:var(--buy)">Tab ini memakai harga langsung dari MT5 kamu, jadi penyesuaian tidak dipakai. Bila MT5/VPS mati, aplikasi kembali ke sumber lama dan penyesuaian di bawah aktif lagi.</p>' + (OFF?`<p class="note">Penyesuaian tersimpan: ${OFF.v>0?"+":""}${fmt(OFF.v)} poin.</p>`:""); return; }
   if(!OFF){ out.innerHTML = calMsg; return; }
   const mins = Math.round((Date.now() - OFF.t)/60000);
   const old = mins > 360;
