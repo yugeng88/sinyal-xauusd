@@ -302,10 +302,21 @@ def api_quote():
         return jsonify(price=None, message="Data M1 belum bisa diambil: " + (c["error"] or "belum ada data"))
     last = c["df"].iloc[-1]
     t_now = pd.Timestamp.now(tz="UTC")
-    lag = max(0.0, (t_now - last["time"]).total_seconds() - 60)          # keterlambatan penyedia data
+    feed = c["df"].attrs.get("data_time")                                # jam transaksi terakhir di sumber (Yahoo)
+    ref = min(pd.Timestamp(feed), t_now) if feed is not None else min(last["time"] + pd.Timedelta(minutes=1), t_now)
     fetched = (now() - c["at"]).total_seconds() if c["at"] else 0.0       # umur cache server
+    age = max(0.0, (t_now - ref).total_seconds())
+    closed, _ = signals.split_closed(c["df"], t_now, 1)                 # candle M1 terakhir yang sudah tutup penuh
+    cl = closed.iloc[-1] if len(closed) else None
+    try:
+        boff = float(os.getenv("BROKER_UTC_OFFSET", "2"))               # jam server broker MT5 (musim dingin biasanya UTC+2)
+    except ValueError:
+        boff = 2.0
     return jsonify(price=round(float(last["close"]), 2), time=last["time"].isoformat(),
-                   source=c["source"], age_seconds=round(lag + fetched), error=c["error"])
+                   price_time=ref.isoformat(), source=c["source"], age_seconds=round(age + fetched),
+                   closed_price=None if cl is None else round(float(cl["close"]), 2),
+                   closed_time=None if cl is None else cl["time"].isoformat(),
+                   broker_utc_offset=boff, error=c["error"])
 
 
 def news_view(ev_id=None, now=None):

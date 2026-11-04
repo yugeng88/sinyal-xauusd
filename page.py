@@ -121,6 +121,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
       <h3>Samakan dengan broker / TradingView</h3>
       <p class="note">Isi harga di broker atau chart TradingView (mis. FXCM) sekarang. Aplikasi membandingkannya dengan harga M1 terbaru, lalu menggeser semua harga di layar supaya sejajar. Sinyal tidak berubah, hanya angkanya.</p>
       <div class="brow"><input id="cal" inputmode="decimal" autocomplete="off" placeholder="Harga broker/TV sekarang" aria-label="Harga broker atau TradingView sekarang"><button id="calbtn" type="button">Samakan</button></div>
+      <div id="calhint"></div>
       <div id="calout"></div>
     </div>
     <h2>Hitung dari harga masuk Anda</h2>
@@ -145,7 +146,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 13 · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 14 · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -323,8 +324,8 @@ function renderCal(){
   if(!OFF){ out.innerHTML = calMsg; return; }
   const mins = Math.round((Date.now() - OFF.t)/60000);
   const old = mins > 360;
-  out.innerHTML = calMsg + `<p class="note"><b>Aktif:</b> semua harga digeser ${OFF.v>0?"+":""}${fmt(OFF.v)} poin (broker/TV − data aplikasi), dikalibrasi ${mins<1?"baru saja":mins+" menit lalu"}.
-    ${OFF.age>120?`<br>Saat itu data M1 tertinggal ${Math.round(OFF.age/60)} menit, jadi selisih bisa meleset sebesar pergerakan harga selama itu.`:""}
+  out.innerHTML = calMsg + `<p class="note"><b>Aktif:</b> semua harga digeser ${OFF.v>0?"+":""}${fmt(OFF.v)} poin (broker/TV − data aplikasi), dikalibrasi ${mins<1?"baru saja":mins+" menit lalu"}${OFF.exact?` dari candle yang sama (${wibClock(OFF.pt)} WIB), jadi tepat`:""}.
+    ${OFF.age>120?`<br>Pembanding: harga aplikasi ${OFF.price!=null?fmt(OFF.price):""}${OFF.pt?" pukul "+wibClock(OFF.pt)+" WIB":""} (data tertinggal ${Math.round(OFF.age/60)} menit). Bila yang kamu ketik harga MT5 <i>sekarang</i>, hasilnya perkiraan.`:""}
     ${old?`<br><span style="color:var(--wait)">Kalibrasi sudah lama. Ulangi bila selisih berubah (mis. pergantian kontrak atau spread melebar).</span>`:""}
     ${SHARED===true?'<br><span style="color:var(--buy)">Notifikasi ntfy ikut memakai penyesuaian ini.</span>':""}
     ${SHARED===false?'<br><span style="color:var(--wait)">Notifikasi ntfy BELUM ikut disesuaikan: penyimpanan bersama (Upstash Redis) belum dipasang di Vercel.</span>':""}
@@ -361,17 +362,42 @@ async function calibrate(){
   try{
     const q = await (await fetch(`/api/quote?symbol=${cur}`,{cache:"no-store"})).json();
     if(!q.price){ say(`<p class="warn">${esc(q.message||"Harga M1 belum bisa diambil.")}</p>`); return; }
-    if(q.age_seconds > 600){ say(`<p class="warn">Harga di aplikasi tertinggal ${Math.round(q.age_seconds/60)} menit (pasar tutup atau data tertunda). Kalibrasi tidak akurat, coba lagi saat pasar buka.</p>`); return; }
-    const p = parsePrice(raw, q.price);
+    if(q.age_seconds > 1800){ say(`<p class="warn">Harga di aplikasi tertinggal ${Math.round(q.age_seconds/60)} menit, kemungkinan pasar sedang tutup. Coba lagi saat pasar buka.</p>`); return; }
+    const exact = $("calexact") && $("calexact").checked && hintQ && hintQ.closed_price != null && hintQ.source === q.source;
+    const refPrice = exact ? hintQ.closed_price : q.price;
+    const p = parsePrice(raw, refPrice);
     if(p == null){ say('<p class="warn">Angka belum terbaca. Contoh: 29011.91</p>'); return; }
-    const d = p - q.price, pct = Math.abs(d/q.price)*100;
+    const d = p - refPrice, pct = Math.abs(d/refPrice)*100;
     if(pct > 2){ say(`<p class="warn">Selisih ${pct.toFixed(1)}% terlalu besar. Kemungkinan instrumennya berbeda (mis. sumber data memakai ETF atau futures), jadi penyesuaian tidak diterapkan. Cek kolom Sumber di bagian bawah.</p>`); return; }
-    OFF = {v: Math.round(d*100)/100, t: Date.now(), age: q.age_seconds, src: q.source, price: q.price};
+    OFF = exact ? {v: Math.round(d*100)/100, t: Date.now(), age: 0, src: q.source, price: refPrice, pt: hintQ.closed_time, exact: true}
+                : {v: Math.round(d*100)/100, t: Date.now(), age: q.age_seconds, src: q.source, price: q.price, pt: q.price_time || q.time};
+    $("calhint").innerHTML = "";
     ls("cal_"+cur, JSON.stringify(OFF)); saveOffServer(cur, OFF);
     $("cal").value = ""; calMsg = "";
     repaint();
   }catch(e){ say('<p class="warn">Tidak bisa menghubungi server.</p>'); }
 }
+const wibClock = iso => new Date(iso).toLocaleTimeString("id-ID",{timeZone:"Asia/Jakarta",hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":");
+let hintQ = null;
+async function calHint(){
+  // Data tertunda (Yahoo NQ=F ~10 menit): beri tahu jam pembanding agar pengguna bisa mengetik close candle MT5 di jam yang sama.
+  const box = $("calhint"); if(!box || cur==="NEWS" || NATIVE()){ if(box) box.innerHTML = ""; return; }
+  try{
+    const q = await (await fetch(`/api/quote?symbol=${cur}`,{cache:"no-store"})).json();
+    if(!q.price || !(q.age_seconds > 120) || q.age_seconds > 1800){ box.innerHTML = ""; return; }
+    if(q.closed_price == null){ box.innerHTML = ""; return; }
+    hintQ = q;
+    const ct = q.closed_time, bo = q.broker_utc_offset ?? 2;
+    const mt5 = new Date(new Date(ct).getTime() + bo*3600000).toISOString().slice(11,16);
+    box.innerHTML = `<p class="note">Data ${esc(cur)} di aplikasi tertinggal sekitar ${Math.round(q.age_seconds/60)} menit.
+      <b>Supaya tepat:</b> di chart M1 MT5, cari candle yang jamnya <b>${mt5}</b> (jam server MT5, sama dengan ${wibClock(ct)} WIB),
+      ketik harga <i>close</i>-nya di atas, centang kotak di bawah, lalu tekan Samakan.</p>
+      <label class="note" style="display:flex;gap:8px;align-items:center;margin:4px 0 8px"><input type="checkbox" id="calexact" style="width:18px;height:18px">
+      Angka yang saya ketik adalah close candle MT5 jam ${mt5}</label>
+      <p class="note" style="opacity:.8">Tanpa centang, angka dianggap harga MT5 sekarang (hasil perkiraan, bisa meleset sebesar gerak harga ${Math.round(q.age_seconds/60)} menit).</p>`;
+  }catch(e){ box.innerHTML = ""; }
+}
+$("cal").addEventListener("focus", calHint);
 $("calbtn").addEventListener("click", calibrate);
 $("cal").addEventListener("keydown", e=>{ if(e.key==="Enter") calibrate(); });
 
