@@ -70,20 +70,56 @@ def scrub(msg):
     return msg
 
 
-_credits = {"day": None, "n": 0}
+_credits = {"day": None, "n": 0, "sync": 0.0}
+
+
+def _kv():
+    """Penghitung bersama di Redis (bila ada), supaya kuota terhitung lintas instance serverless."""
+    try:
+        import notify
+        return notify if notify._redis() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def credit_cap():
+    try:
+        return int(os.getenv("DAILY_CREDIT_CAP", "700"))
+    except ValueError:
+        return 700
 
 
 def credits_used():
-    """Perkiraan jumlah permintaan Twelve Data hari ini (per proses server)."""
+    """Perkiraan jumlah permintaan Twelve Data hari ini (Redis bila ada, kalau tidak per proses)."""
     today = time.strftime("%Y-%m-%d", time.gmtime())
     if _credits["day"] != today:
-        _credits.update(day=today, n=0)
+        _credits.update(day=today, n=0, sync=0.0)
+    kv = _kv()
+    if kv and time.time() - _credits["sync"] > 60:
+        try:
+            _credits["n"] = max(_credits["n"], int(kv._rcall(["GET", "sinyal:credits:" + today]) or 0))
+        except Exception:  # noqa: BLE001
+            pass
+        _credits["sync"] = time.time()
     return _credits["n"]
+
+
+def td_over_cap():
+    return credits_used() >= credit_cap()
 
 
 def _count_credit():
     credits_used()
     _credits["n"] += 1
+    kv = _kv()
+    if kv:
+        try:
+            k = "sinyal:credits:" + _credits["day"]
+            _credits["n"] = max(_credits["n"], int(kv._rcall(["INCR", k])))
+            kv._rcall(["EXPIRE", k, 172800])
+            _credits["sync"] = time.time()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 OANDA_INST = {"XAUUSD": "XAU_USD", "NASDAQ": "NAS100_USD"}
@@ -215,6 +251,9 @@ def get_candles(key, tf="H1"):
             break
         if provider == "td" and not has_td:
             continue
+        if provider == "td" and td_over_cap():
+            errors.append(f"Twelve Data dilewati: kuota harian aplikasi tercapai ({credits_used()}/{credit_cap()})")
+            continue
         try:
             df, src = fetch_one(provider, sym, tf)
             if len(df) >= min_rows:
@@ -273,6 +312,9 @@ def get_range(key, tf, start, end):
                 return fetch_oanda_range(os.getenv("OANDA_TOKEN", "").strip(), sym, OANDA_GRAN[tf], start, end,
                                          os.getenv("OANDA_ENV", "practice").strip().lower())[0]
             if provider == "td" and td_key:
+                if td_over_cap():
+                    errors.append(f"Twelve Data dilewati: kuota harian aplikasi tercapai ({credits_used()}/{credit_cap()})")
+                    continue
                 return fetch_twelvedata_range(td_key, sym, TF[tf]["td"], start, end)[0]
         except Exception as e:  # noqa: BLE001
             errors.append(scrub(e))

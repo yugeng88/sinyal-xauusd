@@ -212,7 +212,7 @@ def api_signal():
     if s["last_attempt"]:
         nxt = (datetime.fromisoformat(s["last_attempt"])
                + timedelta(seconds=ttl_seconds(tf))).isoformat()
-    s.update(notify={"channels": notify.channels(), "last_cron": _last_cron["at"]},
+    s.update(notify={"channels": notify.channels(), "last_cron": last_cron()},
              symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
              now=now().isoformat())
     return jsonify(s)
@@ -323,6 +323,39 @@ def api_news():
 _last_cron = {"at": None}
 
 
+_tries = {}                    # (sym, tf) -> (batas candle, jumlah percobaan ambil data)
+NEW_CANDLE_DELAY = 8           # detik menunggu penyedia data memuat candle yang baru tertutup
+NEW_CANDLE_RETRY = 30          # detik antar percobaan ulang
+NEW_CANDLE_MAX_TRIES = 6       # percobaan cepat per batas candle
+NEW_CANDLE_SLOW = 90           # setelah itu tetap dicoba, tapi tiap 90 detik (dulu: berhenti total)
+
+
+def new_candle_due(sym, tf, ts, now_dt):
+    """True bila sudah ada candle tertutup baru yang belum terambil. Selaras dengan batas candle,
+    jadi sinyal terdeteksi beberapa detik setelah candle tutup (bukan menunggu jeda tetap)."""
+    st = states[(sym, tf)]
+    sig, la = st["signal"], st["last_attempt"]
+    if sig is None or la is None:
+        return True
+    have = sig.get("candle_time")
+    if not have:
+        return False
+    m = tf_minutes(tf)
+    boundary = ts.floor(f"{m}min")
+    if pd.Timestamp(have) >= boundary - pd.Timedelta(minutes=m):
+        return False                                   # candle tertutup terakhir sudah terambil
+    if (ts - boundary).total_seconds() < NEW_CANDLE_DELAY:
+        return False
+    if (now_dt - datetime.fromisoformat(la)).total_seconds() < NEW_CANDLE_RETRY:
+        return False
+    b, n = _tries.get((sym, tf), (None, 0))
+    n = n + 1 if b == boundary.isoformat() else 1
+    if n > NEW_CANDLE_MAX_TRIES and (now_dt - datetime.fromisoformat(la)).total_seconds() < NEW_CANDLE_SLOW:
+        return False                                   # penyedia data telat: coba lagi lebih jarang, jangan menyerah
+    _tries[(sym, tf)] = (boundary.isoformat(), n)
+    return True
+
+
 def parse_targets(raw):
     out = []
     for part in (raw or "XAUUSD:M15,NASDAQ:M15").split(","):
@@ -346,27 +379,39 @@ def cron_run(ts=None, click=None):
     if not notify.channels():
         return {"error": "Belum ada kanal notifikasi. Isi NTFY_TOPIC (atau token Telegram) di Vercel."}
     _drain()
-    sent, notes = [], []
-    over = data.credits_used() >= int(os.getenv("DAILY_CREDIT_CAP", "700"))
+    sent, notes, refreshed, status = [], [], [], []
+    if data.td_over_cap():
+        # Dulu: seluruh putaran cron berhenti (sinyal baru hanya muncul saat dasbor dibuka).
+        # Sekarang: Twelve Data saja yang dilewati di data.get_candles, sumber cadangan tetap dipakai.
+        notes.append(f"kuota Twelve Data hari ini tercapai ({data.credits_used()}/{data.credit_cap()}): memakai sumber cadangan")
     for sym, tf in parse_targets(os.getenv("NOTIFY_TARGETS")):
         st = states[(sym, tf)]
         closed = bool(st["signal"] and st["signal"].get("market_closed"))
-        gap = 1800 if closed else (60 if st["error"] else ttl_seconds(tf))
         la = st["last_attempt"]
-        if la is None or (now() - datetime.fromisoformat(la)).total_seconds() > gap:
-            if over:
-                notes.append(f"kuota Twelve Data hari ini {data.credits_used()}: {sym} {tf} dilewati")
-            else:
-                refresh(sym, tf)
+        age = None if la is None else (now() - datetime.fromisoformat(la)).total_seconds()
+        if closed:
+            due = age is None or age > 1800                      # pasar tutup: cek jarang
+        elif st["error"]:
+            due = age is None or age >= 60                       # galat: coba lagi tiap menit
+        else:
+            # normal: tepat setelah candle tutup; jaring pengaman: paling lambat 1 candle + 1 menit
+            due = new_candle_due(sym, tf, ts, now()) or age is None or age > tf_minutes(tf) * 60 + 60
+        if due:
+            refresh(sym, tf)
+            refreshed.append(f"{sym}:{tf}")
         sig = st["signal"]
         if sig:
             maybe_notify_signal(sym, tf, sig, click)
         sent.extend(_drain())
+        a = sig["tracking"]["active"] if sig and sig.get("tracking") else None
+        status.append({"target": f"{sym}:{tf}", "candle": sig and sig.get("candle_time"),
+                       "source": sig and sig.get("source"), "market_closed": bool(sig and sig.get("market_closed")),
+                       "active": a and f"{a['direction']} {a['time']} (umur {a['age_hours'] * 60:.0f} mnt)",
+                       "error": st["error"]})
         if not sig:
             continue
-        a = sig["tracking"]["active"] if sig.get("tracking") else None
         ck = f"cfm:{sym}:{tf}:{a['time']}" if a else None
-        if a and not sig.get("market_closed") and not over and not notify.seen(ck):
+        if a and not sig.get("market_closed") and not notify.seen(ck):
             c = compute_confirm(sym, a)
             if c and c.get("state") == "CONFIRMED":
                 title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym))
@@ -378,13 +423,13 @@ def cron_run(ts=None, click=None):
     pre_min = int(os.getenv("NEWS_PRE_MIN", "30"))
     off = notify.offset("XAUUSD")
     nxt = [e for e in evs if e["status"] == "PRA"][:1]
-    if nxt and -nxt[0]["minutes"] <= 36 * 60 and not over:       # hangatkan riwayat sebelum rilis
+    if nxt and -nxt[0]["minutes"] <= 36 * 60:       # hangatkan riwayat sebelum rilis
         typ = nxt[0]["type"]
         per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
         news.ensure_windows(news.TYPES[typ]["family"], news.past_dates(typ, ts.to_pydatetime()),
                             lambda x, y: data.get_range("XAUUSD", "M5", x, y), per_minute=per_min)
     for ev in evs:
-        if over or ev["status"] not in ("PRA", "PASCA"):
+        if ev["status"] not in ("PRA", "PASCA"):
             continue
         left = -ev["minutes"]
         if ev["status"] == "PRA" and left <= pre_min:
@@ -418,8 +463,24 @@ def cron_run(ts=None, click=None):
                 if r is not None:
                     sent.append({"jenis": "news_pasca", "target": ev["id"], "hasil": r})
     _last_cron["at"] = ts.isoformat()
+    notify.kv_set("last_cron", ts.isoformat())             # terbaca juga oleh instance serverless lain
     return {"ran": ts.isoformat(), "channels": notify.channels(), "targets": [f"{s}:{t}" for s, t in parse_targets(os.getenv("NOTIFY_TARGETS"))],
-            "sent": sent, "notes": notes, "credits_today": data.credits_used()}
+            "refreshed": refreshed, "sent": sent, "notes": notes, "status": status,
+            "credits_today": data.credits_used(), "credit_cap": data.credit_cap()}
+
+
+_cron_seen = {"at": None, "v": None}
+
+
+def last_cron():
+    """Waktu putaran cron terakhir. Di serverless, cron dan dasbor bisa jatuh ke instance berbeda,
+    jadi baca dari Redis bila ada (disimpan 30 detik agar tidak memanggil Redis tiap permintaan)."""
+    if _last_cron["at"]:
+        return _last_cron["at"]
+    t = time.time()
+    if _cron_seen["at"] is None or t - _cron_seen["at"] > 30:
+        _cron_seen.update(at=t, v=notify.kv_get("last_cron"))
+    return _cron_seen["v"]
 
 
 @app.get("/api/cron")

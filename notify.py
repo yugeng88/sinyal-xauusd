@@ -83,6 +83,24 @@ def once(key, ttl=172800):
     return True
 
 
+def kv_set(key, value, ttl=172800):
+    """Simpan nilai kecil bersama (mis. waktu putaran cron terakhir) agar terbaca lintas instance."""
+    if _redis():
+        try:
+            _rcall(["SET", "sinyal:" + key, str(value), "EX", int(ttl)])
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def kv_get(key):
+    if _redis():
+        try:
+            return _rcall(["GET", "sinyal:" + key])
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def forget(key):
     """Lepas tanda (dipakai bila pengiriman gagal di semua kanal, supaya dicoba lagi)."""
     _mem.pop(key, None)
@@ -141,6 +159,10 @@ def fp(x, off=0.0):
     return f"{x + off:,.2f}"
 
 
+def hm(iso):
+    return f"{(datetime.fromisoformat(iso) + timedelta(hours=7)):%H:%M} WIB"
+
+
 def wib(iso):
     t = datetime.fromisoformat(iso) + timedelta(hours=7)
     return f"{DAYS[t.weekday()]} {t.day} {MONTHS[t.month - 1]} {t:%H:%M} WIB"
@@ -150,7 +172,7 @@ def signal_message(label, tf, a, off=0.0):
     lv = a["levels"]
     tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
     return (f"{label} {tf} · {a['direction']}",
-            f"Sinyal baru (keyakinan {a['confidence']}%)\n"
+            f"Sinyal baru (keyakinan {a['confidence']}%) · candle {tf} ditutup {hm(a['time_close'])}\n"
             f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)}\n{tps}\n"
             "Tunggu konfirmasi M1 sebelum masuk. Bukan saran investasi.")
 
