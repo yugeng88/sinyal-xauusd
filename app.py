@@ -163,8 +163,14 @@ def maybe_notify_exit(sym, tf, sig, click=None):
         if not notify.seen(f"sig:{sym}:{tf}:{r['time']}"):
             continue                                   # sinyal ini dulu tidak dikabarkan: tidak perlu KELUAR
         new_dir = a["direction"] if (r["outcome"] == "REVERSED" and a) else None
-        title, msg = notify.exit_message(sig["label"], tf, r, new_dir, off)
-        tag = {"TP3": "money_with_wings", "SL": "x"}.get(r["outcome"], "door")
+        renewed = (r["outcome"] == "EXPIRED" and a and a["direction"] == r["direction"]
+                   and pd.Timestamp(a["time"]) >= pd.Timestamp(r["end_time"]) - pd.Timedelta(minutes=tf_minutes(tf)))
+        if renewed:                                    # kedaluwarsa tapi langsung terbit sinyal baru searah
+            title, msg = notify.renew_message(sig["label"], tf, r, a, off)
+            tag = "arrows_counterclockwise"
+        else:
+            title, msg = notify.exit_message(sig["label"], tf, r, new_dir, off)
+            tag = {"TP3": "money_with_wings", "SL": "x"}.get(r["outcome"], "door")
         res = notify.deliver(f"exit:{sym}:{tf}:{r['time']}", title, msg, 4, [tag], click)
         if res is not None:
             _sent_log.append({"jenis": "keluar_" + r["outcome"].lower(), "target": f"{sym}:{tf}", "hasil": res})

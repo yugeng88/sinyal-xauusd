@@ -299,3 +299,17 @@ def weak_message(label, tf, a, score, max_score, price, off=0.0):
             f"Skor indikator sekarang {score:+d} dari ±{max_score} ({state}), tidak lagi mendukung {a['direction']}.\n"
             f"Entry {fp(lv['entry'], off)} → harga {fp(price, off)} ({pts:+.2f} poin) · SL {fp(lv['stop_loss'], off)}\n"
             "Pertimbangkan keluar lebih awal atau geser SL ke titik impas. Bukan saran investasi.")
+
+
+def renew_message(label, tf, r, a, off=0.0):
+    """Sinyal lama kedaluwarsa, tetapi pada candle yang sama terbit sinyal baru searah."""
+    sg = 1 if r["direction"] == "BUY" else -1
+    pts = (r["exit_price"] - r["entry"]) * sg
+    lv = a["levels"]
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
+    return (f"{label} {tf} · {a['direction']} DIPERBARUI",
+            f"Sinyal {r['direction']} lama ({hm(r['time'])}) kedaluwarsa, tetapi indikator masih mendukung {a['direction']}: "
+            f"sinyal baru terbit {hm(a['time_close'])}.\n"
+            f"Entry lama {fp(r['entry'], off)} → harga {fp(r['exit_price'], off)} ({pts:+.2f} poin)\n"
+            f"Level baru: SL {fp(lv['stop_loss'], off)} | {tps}\n"
+            "Posisi boleh ditahan dengan SL/TP baru, atau tutup bila ingin aman. Bukan saran investasi.")
