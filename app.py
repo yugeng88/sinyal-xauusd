@@ -140,8 +140,51 @@ def _drain():
     return out
 
 
+EXIT_FRESH_MIN = 30            # menit: sinyal yang berakhir lebih lama dari ini tidak dikabarkan lagi
+
+
+def maybe_notify_exit(sym, tf, sig, click=None):
+    """Notifikasi KELUAR (v15), hanya untuk sinyal yang dulu dikirim lewat notifikasi:
+    - sinyal berakhir: berbalik arah, SL, TP3, atau kedaluwarsa;
+    - sinyal masih aktif tetapi skor indikator sudah netral/berlawanan (MELEMAH)."""
+    tr = sig.get("tracking") or {}
+    if sig.get("market_closed") or not tr:
+        return
+    off = 0.0 if sig.get("broker_native") else notify.offset(sym)
+    click = click or app_url()
+    a = tr.get("active")
+    limit = max(3 * tf_minutes(tf), EXIT_FRESH_MIN) * 60
+    t_now = pd.Timestamp.now(tz="UTC")
+    for r in tr.get("recent") or []:
+        if r.get("outcome") not in notify.EXIT_REASON or not r.get("end_time"):
+            continue
+        if (t_now - pd.Timestamp(r["end_time"])).total_seconds() > limit:
+            continue                                   # sudah lama berakhir: jangan kirim kabar basi
+        if not notify.seen(f"sig:{sym}:{tf}:{r['time']}"):
+            continue                                   # sinyal ini dulu tidak dikabarkan: tidak perlu KELUAR
+        new_dir = a["direction"] if (r["outcome"] == "REVERSED" and a) else None
+        title, msg = notify.exit_message(sig["label"], tf, r, new_dir, off)
+        tag = {"TP3": "money_with_wings", "SL": "x"}.get(r["outcome"], "door")
+        res = notify.deliver(f"exit:{sym}:{tf}:{r['time']}", title, msg, 4, [tag], click)
+        if res is not None:
+            _sent_log.append({"jenis": "keluar_" + r["outcome"].lower(), "target": f"{sym}:{tf}", "hasil": res})
+    if a and sig.get("score") is not None:
+        sg = 1 if a["direction"] == "BUY" else -1
+        if sg * sig["score"] <= 0 and notify.seen(f"sig:{sym}:{tf}:{a['time']}"):
+            price = sig.get("live_price") or sig["price"]
+            title, msg = notify.weak_message(sig["label"], tf, a, sig["score"], sig["max_score"], price, off)
+            res = notify.deliver(f"weak:{sym}:{tf}:{a['time']}", title, msg, 4, ["warning"], click)
+            if res is not None:
+                _sent_log.append({"jenis": "melemah", "target": f"{sym}:{tf}", "hasil": res})
+
+
 def maybe_notify_signal(sym, tf, sig, click=None):
-    """Notifikasi sinyal baru: sekali per sinyal, hanya bila masih segar dan pasar buka."""
+    """Notifikasi sinyal baru: sekali per sinyal, hanya bila masih segar dan pasar buka.
+    Juga memeriksa notifikasi KELUAR / MELEMAH untuk sinyal sebelumnya."""
+    try:
+        maybe_notify_exit(sym, tf, sig, click)
+    except Exception:  # noqa: BLE001  - kabar keluar tidak boleh menggagalkan sinyal baru
+        pass
     a = sig["tracking"]["active"] if sig.get("tracking") else None
     if not a or sig.get("market_closed") or a["age_hours"] * 60 > max(3 * tf_minutes(tf), 15):
         return None

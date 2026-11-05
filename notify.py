@@ -264,3 +264,38 @@ def news_post_message(ev, sig, off=0.0):
             f"Gerak sejak rilis {mv:+.2f} poin, searah pola riwayat (keyakinan {sig['confidence']}%).\n"
             f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}\n"
             "Bukan saran investasi.")
+
+
+EXIT_REASON = {
+    "REVERSED": "Sinyal berbalik arah",
+    "SL": "Stop loss tersentuh",
+    "TP3": "TP3 tercapai",
+    "EXPIRED": "Sinyal kedaluwarsa (lewat batas waktu)",
+}
+
+
+def exit_message(label, tf, r, new_dir=None, off=0.0):
+    """Sinyal aktif selesai: berbalik, SL, TP3, atau kedaluwarsa."""
+    sg = 1 if r["direction"] == "BUY" else -1
+    pts = (r["exit_price"] - r["entry"]) * sg
+    why = EXIT_REASON.get(r["outcome"], r["outcome"])
+    if r["outcome"] == "REVERSED" and new_dir:
+        why += f" ke {new_dir}"
+    act = {"TP3": "Ambil profit / tutup posisi.",
+           "SL": "Posisi seharusnya sudah tertutup oleh SL."}.get(r["outcome"], "Pertimbangkan tutup posisi.")
+    tp = f" · TP tersentuh: {r['tp_hit']} dari 3" if r.get("tp_hit") else ""
+    return (f"{label} {tf} · KELUAR {r['direction']}",
+            f"{why}.\nEntry {fp(r['entry'], off)} → harga {fp(r['exit_price'], off)} ({pts:+.2f} poin){tp}\n"
+            f"Sinyal terbit {hm(r['time'])}, berakhir {hm(r['end_time'])}.\n{act} Bukan saran investasi.")
+
+
+def weak_message(label, tf, a, score, max_score, price, off=0.0):
+    """Sinyal masih aktif, tetapi indikator sudah tidak mendukung arahnya."""
+    lv = a["levels"]
+    sg = 1 if a["direction"] == "BUY" else -1
+    pts = (price - lv["entry"]) * sg
+    state = "netral" if score == 0 else "berlawanan"
+    return (f"{label} {tf} · {a['direction']} MELEMAH",
+            f"Skor indikator sekarang {score:+d} dari ±{max_score} ({state}), tidak lagi mendukung {a['direction']}.\n"
+            f"Entry {fp(lv['entry'], off)} → harga {fp(price, off)} ({pts:+.2f} poin) · SL {fp(lv['stop_loss'], off)}\n"
+            "Pertimbangkan keluar lebih awal atau geser SL ke titik impas. Bukan saran investasi.")

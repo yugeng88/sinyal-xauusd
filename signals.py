@@ -257,6 +257,7 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
       lewat expiry_hours, atau muncul sinyal arah berlawanan.
     - Bila SL dan TP tersentuh dalam satu candle, SL dianggap lebih dulu.
     - Setelah SL, sinyal arah sama diblokir selama `cooldown_bars` candle.
+    - Sinyal yang berakhir mencatat end_time dan exit_price (untuk notifikasi KELUAR).
     """
     cfg = D.TF[tf]
     minutes = cfg["minutes"]
@@ -270,10 +271,23 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
     blocked = {"BUY": -10 ** 9, "SELL": -10 ** 9}
     cur, done = None, []
 
+    live = float(df["close"].iloc[-1])
+
     def finish(outcome, i):
         nonlocal cur
+        # Kapan dan di harga berapa sinyal berakhir (dipakai notifikasi KELUAR).
+        lv = cur["levels"]
+        if i < n:
+            end_t = closed.iloc[i]["time"] + pd.Timedelta(minutes=minutes)
+            px = float(closed.iloc[i]["close"])
+        else:                                          # candle berjalan / kedaluwarsa sekarang
+            end_t, px = now, live
+        if outcome == "SL":
+            px = lv["stop_loss"]
+        elif outcome == "TP3":
+            px = lv["tp"][2]
         done.append({**{k: cur[k] for k in ("direction", "time", "levels", "confidence", "tp_hit")},
-                     "outcome": outcome})
+                     "outcome": outcome, "end_time": min(end_t, now).isoformat(), "exit_price": round(float(px), 2)})
         if outcome == "SL":
             blocked[cur["direction"]] = i
         cur = None
@@ -308,7 +322,6 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
 
     last_time = df.iloc[-1]["time"]
     market_closed = (now - last_time).total_seconds() / 3600 > cfg["stale_h"]
-    live = float(df["close"].iloc[-1])
     active = None
     if cur is not None:
         age_h = (now - cur["time"]).total_seconds() / 3600
@@ -343,7 +356,8 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
     recent = [{"time": r["time"].isoformat(), "direction": r["direction"],
                "entry": r["levels"]["entry"], "stop_loss": r["levels"]["stop_loss"],
                "tp": r["levels"]["tp"], "confidence": r["confidence"],
-               "tp_hit": r["tp_hit"], "outcome": r["outcome"]} for r in done][::-1][:10]
+               "tp_hit": r["tp_hit"], "outcome": r["outcome"],
+               "end_time": r.get("end_time"), "exit_price": r.get("exit_price")} for r in done][::-1][:10]
     return {"active": active, "recent": recent, "stats": stats,
             "expiry_hours": expiry_hours, "tf": tf}
 

@@ -1,4 +1,4 @@
-PANDUAN MENGHUBUNGKAN MT5 KE APLIKASI SINYAL (Versi 13)
+PANDUAN MENGHUBUNGKAN MT5 KE APLIKASI SINYAL (Versi 15)
 =========================================================
 
 Cara kerja
@@ -17,7 +17,7 @@ EA ini TIDAK membuka atau menutup order. Ia hanya membaca harga.
 A. UPLOAD FILE SERVER KE GITHUB
 -------------------------------
 Upload: app.py, data.py, notify.py, page.py, index.html
-Tunggu Vercel selesai deploy (Ready). Di bawah dasbor akan tertulis "Versi 13".
+Tunggu Vercel selesai deploy (Ready). Di bawah dasbor akan tertulis "Versi 15".
 
 
 B. PASANG EA DI PC/LAPTOP
