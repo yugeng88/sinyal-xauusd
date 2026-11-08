@@ -91,6 +91,17 @@ body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard,
 .sigbox .dir{font-size:20px;font-weight:700}.sigbox ul{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:#d6daee}
 .mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .mini div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}.mini small{display:block;color:var(--mute);font-size:11.5px}.mini b{font-size:15px;font-variant-numeric:tabular-nums}
+.nin{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.nin label{display:block;font-size:11.5px;color:var(--mute)}
+.nin input{width:100%;margin-top:4px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px 8px;font:600 16px var(--font)}
+.nbtn{background:#1a1d33;color:var(--text);border:1px solid #4a5688;border-radius:8px;padding:10px 14px;font:600 14px var(--font);cursor:pointer;width:100%}
+.sur{margin-top:10px;font-size:13px;line-height:1.55;border:1px solid #2c3a66;background:#141a33;border-radius:8px;padding:9px 11px}
+.fac{list-style:none;padding:0;margin:8px 0 0;font-size:12.5px;line-height:1.5}
+.fac li{padding:4px 0;border-top:1px solid var(--line);color:#d6daee}.fac li:first-child{border-top:0}
+.fac b{font-variant-numeric:tabular-nums}
+details.how summary{cursor:pointer;font-weight:700;font-size:15px}
+details.how ol{margin:10px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#d6daee}
+details.how li{margin-bottom:6px}
 .empty{color:var(--mute);font-size:14px;text-align:center;padding:18px 0}
 .disc{text-align:center;color:var(--mute);font-size:12px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -145,7 +156,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 15.1 · data langsung dari MT5 (EA) + notifikasi masuk &amp; keluar</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 16 · sinyal news BUY/SELL + pembaca Forecast/Actual · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -416,17 +427,30 @@ function countdownText(iso){
 }
 setInterval(()=>{ const e=$("cd"); if(e && e.dataset.t0) e.textContent = countdownText(e.dataset.t0); }, 1000);
 
+const NW = id => { try{ return JSON.parse(ls("nw_"+id)||"null") || {}; }catch(e){ return {}; } };
+const factorsHtml = fx => (fx&&fx.length) ? `<ul class="fac">${fx.map(x=>`<li><b class="${x.value>0.01?"BUY":x.value<-0.01?"SELL":"WAIT"}">${esc(x.name)} ${x.value>0?"+":""}${Number(x.value).toFixed(2)}</b> <span style="color:var(--mute)">(${x.additive?"penyesuaian":"bobot"} ${Math.round(x.weight*100)}%)</span><br><span style="color:var(--mute)">${esc(x.note)}</span></li>`).join("")}</ul>` : "";
+const HOW = `<details class="how"><summary>Cara membaca angka berita (seperti di Forex Factory)</summary><ol>
+  <li>Buka kalender Forex Factory, cari berita <b>USD</b> berfolder merah (dampak tinggi). Ada tiga angka: <b>Previous</b> (sebelumnya), <b>Forecast</b> (perkiraan pasar), <b>Actual</b> (hasil rilis).</li>
+  <li>Yang menggerakkan harga adalah <b>kejutan</b>: Actual dibanding <b>Forecast</b>, bukan dibanding Previous. Forecast sudah masuk harga sebelum rilis.</li>
+  <li>Aturan emas (XAUUSD): Actual <b>di atas</b> Forecast (inflasi, pekerjaan, atau suku bunga lebih tinggi) → dolar menguat → emas cenderung <b>turun (SELL)</b>. Actual <b>di bawah</b> Forecast → dolar melemah → emas cenderung <b>naik (BUY)</b>. Sama persis → ikuti reaksi harga.</li>
+  <li>Besar kejutan: CPI/PCE dihitung per 0,1 poin persen, NFP per 50 ribu pekerjaan, suku bunga per 0,25. Ini aturan praktis, bisa diubah di news.py.</li>
+  <li>Lima menit pertama setelah rilis spread lebar dan harga acak: jangan entry dulu. Setelah itu, <b>harga adalah hakim terakhir</b>: bila angka bilang SELL tetapi harga naik kuat, ikuti harga.</li>
+  <li>Contoh dari video referensi: Core CPI 0,3% (Forecast 0,2%) membuat emas turun sekitar 600 pip. Itu satu contoh, bukan jaminan.</li>
+  <li>Sebelum rilis, Forecast dan Previous terisi otomatis dari Forex Factory bila terbaca. <b>Actual</b> ketik sendiri tepat setelah rilis (feed gratis tidak memuatnya), lalu tekan Hitung.</li></ol></details>`;
+
 function renderNews(j){
   const v = $("newsview");
   if(!j.focus){ v.innerHTML = `<div class="card error">${esc(j.error||"Data berita belum tersedia.")}</div>`; return; }
   const f = j.focus, s = f.signal || {}, st = f.study || {n:0}, pr = f.progress || {};
   const offX = loadOff("XAUUSD"), px = x => x==null ? "–" : fmt(offX ? x + offX.v : x);
   const evs = j.events.map(e=>`<button class="ev ${e.status} ${e.id===f.id?"sel":""}" data-id="${esc(e.id)}">${esc(e.short)}${e.confirmed?"":" ≈"}<small>${esc(wibShort(e.t0))} · ${STATUS[e.status]||""}</small></button>`).join("");
-  const dirCls = s.direction || "WAIT", dirTxt = s.direction==="WAIT"||!s.direction ? "TUNGGU" : s.direction;
+  const dirCls = s.direction || "WAIT";
+  let dirTxt = s.direction==="WAIT"||!s.direction ? "TUNGGU" : s.direction;
+  if(dirTxt==="TUNGGU" && s.lean) dirTxt = `TUNGGU 5 menit · arah awal ${s.lean}`;
   const title = {PRA:"Sinyal sebelum news", RILIS:"Sedang rilis", PASCA:"Sinyal setelah rilis", SELESAI:"Berita selesai"}[s.kind||f.status] || "Sinyal";
   const lv = s.levels ? `<div class="mini"><div><small>Entry</small><b>${px(s.levels.entry)}</b></div><div><small>Stop loss</small><b class="sl">${px(s.levels.stop_loss)}</b></div>
       <div><small>TP1</small><b class="tp">${px(s.levels.tp1)}</b></div><div><small>TP2</small><b class="tp">${px(s.levels.tp2)}</b></div></div>
-      <p class="note" style="margin-top:6px">Jarak risiko ${fmt(s.levels.risk_points)} poin. Saat rilis, spread melebar dan slippage bisa membuat SL tereksekusi lebih jauh.</p>` : "";
+      <p class="note" style="margin-top:6px">Jarak risiko ${fmt(s.levels.risk_points)} poin${s.levels.rr1!=null?` · TP1:SL = ${fmt(s.levels.rr1)}`:""}. Saat rilis, spread melebar dan slippage bisa membuat SL tereksekusi lebih jauh.</p>` : "";
   const sd = s.straddle ? `<div class="mini"><div><small>Buy hanya bila M5 close di atas</small><b>${px(s.straddle.buy_above)}</b></div><div><small>Sell hanya bila M5 close di bawah</small><b>${px(s.straddle.sell_below)}</b></div></div>
       <p class="note" style="margin-top:6px">${esc(s.straddle.note)} Gerak 60 menit yang biasa: ±${fmt(s.straddle.typical_move_60m)} poin.</p>` : "";
   const reasons = (s.reasons||[]).map(r=>`<li>${esc(r)}</li>`).join("");
@@ -437,31 +461,57 @@ function renderNews(j){
     stats = `<p class="statline">${st.n} kejadian terakhir. Harga naik di menit ke-60: ${u.k} dari ${u.n} (${Math.round(u.rate*100)}%, rentang 95%: ${Math.round(u.lo*100)}–${Math.round(u.hi*100)}%).
       Gerak 15 menit yang biasa: ${fmt(st.med_abs_r15)} poin, rentang 60 menit: ${fmt(st.med_range60)} poin.
       ${st.cont.n?`Reaksi besar lanjut searah: ${st.cont.k} dari ${st.cont.n}. `:""}${st.fade5.n?`Arah 5 menit pertama berbalik di menit ke-60: ${st.fade5.k} dari ${st.fade5.n}.`:""}
-      ${st.enough?"":`<br><b style="color:var(--wait)">Riwayat belum cukup (minimal 6), statistik ini belum dipakai untuk sinyal arah.</b>`}</p>
+      ${st.enough?"":`<br><b style="color:var(--wait)">Sampel kecil (${st.n} kejadian): pengaruh riwayat pada sinyal ditahan, bukti masih lemah.</b>`}</p>
       <table class="hist"><thead><tr><th>Tanggal</th><th>5m</th><th>15m</th><th>60m</th><th>Rentang</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="note" style="margin-top:6px">Angka dalam poin XAUUSD dari harga tepat sebelum rilis.</p>`;
   }
   const prog = (pr.total && pr.done < pr.total) ? `<p class="note">Mengambil riwayat harga: ${pr.done} dari ${pr.total}${pr.wait_seconds?` (menunggu kuota per menit ±${pr.wait_seconds} detik)`:""}…${pr.error?`<br><span style="color:var(--sell)">${esc(pr.error)}</span>`:""}</p>
       <div class="bar"><div style="width:${Math.round(pr.done/pr.total*100)}%"></div></div>` : "";
+  const inp = f.inputs || {}, sur = f.surprise;
+  const man = NW(f.id);
+  const nv = k => esc(man[k] != null && man[k] !== "" ? man[k] : (inp[k] || ""));
+  const numcard = inp.supported ? `<section class="card" id="numcard"><h2>Angka berita · ${esc(inp.metric||"")}</h2>
+      <p class="note">Forecast dan Previous terisi otomatis dari kalender Forex Factory bila terbaca. Ketik <b>Actual</b> tepat setelah rilis (lihat Forex Factory), lalu tekan Hitung. Boleh isi manual semuanya, contoh 0.3% atau 145K.</p>
+      <div class="nin"><label>Forecast<input id="nf" inputmode="decimal" autocomplete="off" value="${nv("forecast")}" placeholder="mis. 0.2%"></label>
+        <label>Previous<input id="np" inputmode="decimal" autocomplete="off" value="${nv("previous")}" placeholder="mis. 0.3%"></label>
+        <label>Actual<input id="na" inputmode="decimal" autocomplete="off" value="${nv("actual")}" placeholder="setelah rilis"></label></div>
+      <button class="nbtn" id="nbtn" type="button">Hitung</button>
+      ${sur&&sur.text?`<div class="sur">${esc(sur.text)}</div>`:`<p class="note" style="margin-top:8px">Isi Forecast dan Previous (atau Actual) untuk membaca kejutan angka.</p>`}
+      <p class="note" style="margin-top:6px">Sumber angka: ${esc(inp.source||"belum ada")}.${inp.feed_error?` Kalender Forex Factory belum terbaca (${esc(inp.feed_error)}); isi manual.`:""}</p></section>` : "";
   v.innerHTML = `
     <div class="evs">${evs}</div>
     <section class="card">
       <div class="top"><div><h1 style="font-size:19px">${esc(f.label)}</h1><div class="sub">${esc(wibFull(f.t0))}<br>${esc(utcTxt(f.t0))}${f.confirmed?"":" · tanggal perkiraan"}</div></div><span class="pill ${f.status}">${STATUS[f.status]}</span></div>
       <div class="cd" id="cd" data-t0="${esc(f.t0)}">${esc(countdownText(f.t0))}</div>
       <div class="sub">XAUUSD ${f.live_price!=null?`<b style="color:var(--text)">${px(f.live_price)}</b>`:"(harga belum tersedia)"}${f.h1_label?` · tren H1: ${esc(f.h1_label)}`:""}${offX?` · disesuaikan ke broker (${sgn(offX.v)})`:""}</div>
-      <div class="sigbox"><div class="dir ${dirCls}">${esc(title)}: ${dirTxt}${s.strength?` (${esc(s.strength)})`:""}${s.confidence?` · batas bawah kepercayaan ${s.confidence}%`:""}</div><ul>${reasons}</ul>${lv}${sd}</div>
+      <div class="sigbox"><div class="dir ${dirCls}">${esc(title)}: ${esc(dirTxt)}${s.strength?` (${esc(s.strength)})`:""}${s.confidence?` · kekuatan bukti ${s.confidence}%`:""}</div><ul>${reasons}</ul>${factorsHtml(s.factors)}${lv}${sd}
+        <p class="note" style="margin-top:8px">Kekuatan bukti = seberapa selaras faktor-faktor di atas, <b>bukan peluang menang</b>.</p></div>
       ${fomc}
     </section>
+    ${numcard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
+    <section class="card">${HOW}</section>
     <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
-      Sinyal berita adalah ringkasan statistik riwayat dan bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
+      Sinyal berita adalah skor dari tren H1, riwayat reaksi, angka berita, dan reaksi harga. Itu kecenderungan, bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
   v.querySelectorAll(".ev").forEach(b=>b.addEventListener("click",()=>{ newsId = b.dataset.id; loadNews(); }));
+  const nb = $("nbtn");
+  if(nb) nb.addEventListener("click",()=>{
+    ls("nw_"+f.id, JSON.stringify({forecast:$("nf").value.trim(), previous:$("np").value.trim(), actual:$("na").value.trim()}));
+    loadNews(true);
+  });
   $("src").textContent = "Sumber harga: " + (j.source||"–");
 }
-async function loadNews(){
+async function loadNews(force){
   const my = seq;
+  const ae = document.activeElement;
+  if(!force && ae && ae.closest && ae.closest("#numcard")) return;      // jangan ganggu saat mengetik angka
   try{
-    const r = await fetch("/api/news"+(newsId?"?id="+encodeURIComponent(newsId):""),{cache:"no-store"}); const j = await r.json();
+    const key = newsId || (newsData && newsData.focus && newsData.focus.id);
+    const m = key ? NW(key) : {};
+    const q = new URLSearchParams();
+    if(newsId) q.set("id", newsId);
+    if(m.forecast) q.set("f", m.forecast); if(m.previous) q.set("p", m.previous); if(m.actual) q.set("a", m.actual);
+    const r = await fetch("/api/news"+(q.toString()?"?"+q.toString():""),{cache:"no-store"}); const j = await r.json();
     if(my!==seq || cur!=="NEWS") return;
     newsData = j; $("err").hidden = true; renderNews(j);
     const pr = j.focus && j.focus.progress;

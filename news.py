@@ -1,10 +1,12 @@
-"""Radar news XAUUSD: jadwal rilis penting, studi reaksi harga historis, dan sinyal.
+"""Radar news XAUUSD: jadwal rilis penting, studi reaksi harga historis, angka berita, dan sinyal.
 
 Prinsip:
 - Jadwal berasal dari sumber resmi (Fed, BLS, BEA). Tidak ada tanggal karangan.
 - Reaksi harga dihitung dari candle M5 XAUUSD nyata di sekitar waktu rilis.
-- Sinyal = ringkasan statistik riwayat + konteks harga sekarang. Sampel kecil (n < MIN_N)
-  tidak pernah dijadikan sinyal arah. Ini bukan jaminan dan bukan saran investasi.
+- Forecast/Previous dibaca dari kalender Forex Factory (feed publik) atau diketik manual. Actual diketik manual.
+- Sinyal = skor dari beberapa faktor (tren H1, kecenderungan riwayat, angka berita, reaksi harga).
+  Selalu menunjuk BUY atau SELL bila ada data, tetapi KEKUATAN BUKTI ditampilkan jujur: sampel kecil =
+  bukti lemah. Ini bukan prediksi dan bukan jaminan.
 """
 import json
 import math
@@ -15,6 +17,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
+import requests
 
 MIN_N = 6                  # minimum kejadian historis agar statistik dipakai
 HISTORY_N = 8              # jumlah kejadian terakhir yang dipelajari per jenis berita
@@ -231,84 +234,342 @@ def summarize(rows):
     }
 
 
+# ------------------------------------------------ cara membaca angka berita
+# Aturan baku untuk emas (XAUUSD) terhadap berita AS (diambil dari video referensi dan praktik umum):
+#   angka LEBIH PANAS dari Forecast (inflasi lebih tinggi, pekerjaan lebih banyak, suku bunga lebih tinggi)
+#   -> dolar cenderung menguat -> emas cenderung TURUN (SELL)
+#   angka LEBIH DINGIN dari Forecast -> dolar cenderung melemah -> emas cenderung NAIK (BUY)
+# Ini kecenderungan, bukan kepastian. Pasar sering bereaksi pada hal lain (misalnya angka inti,
+# revisi, nada pidato), jadi reaksi harga tetap diberi bobot terbesar.
+# "unit" = ukuran satu kejutan yang dianggap bermakna (aturan praktis, boleh diubah di sini).
+SURPRISE_CFG = {
+    "CPI":  {"metric": "Core CPI m/m", "feed": ["Core CPI m/m", "CPI m/m"], "unit": 0.1},
+    "PCE":  {"metric": "Core PCE Price Index m/m", "feed": ["Core PCE Price Index m/m", "PCE Price Index m/m"], "unit": 0.1},
+    "NFP":  {"metric": "Non-Farm Employment Change", "feed": ["Non-Farm Employment Change"], "unit": 50000.0},
+    "FOMC": {"metric": "Federal Funds Rate", "feed": ["Federal Funds Rate"], "unit": 0.25},
+}
+W_TREND, W_HIST, W_FCST = 0.40, 0.35, 0.25     # bobot sinyal SEBELUM rilis
+W_PRICE, W_SURP, W_CONT = 0.50, 0.40, 0.10     # bobot sinyal SESUDAH rilis
+FLOOR_PRE, FLOOR_POST = 0.05, 0.12             # skor minimum agar arah dikeluarkan
+
+_NUM = re.compile(r"^\s*[<>\u2264\u2265~]?\s*(-?\d+(?:\.\d+)?)\s*([KMBT%]?)\s*$", re.I)
+_MULT = {"": 1.0, "%": 1.0, "K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
+
+
+def _clamp(x, lo=-1.0, hi=1.0):
+    return max(lo, min(hi, x))
+
+
+def parse_num(s):
+    """'0.3%' -> 0.3 ; '145K' -> 145000 ; '0,3' -> 0.3 ; '1,234K' -> 1234000. None bila tidak terbaca."""
+    if s is None:
+        return None
+    t = str(s).strip().replace(" ", "")
+    if not t:
+        return None
+    if "," in t and "." in t:
+        t = t.replace(",", "")                                   # 1,234.5 -> 1234.5
+    elif "," in t:
+        t = t.replace(",", "") if re.fullmatch(r"-?\d{1,3}(,\d{3})+[KMBT%]?", t, re.I) else t.replace(",", ".")
+    m = _NUM.match(t)
+    if not m:
+        return None
+    return float(m.group(1)) * _MULT[m.group(2).upper()]
+
+
+def surprise(typ, forecast=None, previous=None, actual=None):
+    """Baca angka berita seperti di Forex Factory: Actual dibanding Forecast (dan Forecast dibanding Previous).
+    v dalam [-1, +1]: positif condong BUY emas, negatif condong SELL emas."""
+    cfg = SURPRISE_CFG.get(typ)
+    if not cfg:
+        return None
+    f, p, a = parse_num(forecast), parse_num(previous), parse_num(actual)
+    unit = cfg["unit"]
+    out = {"metric": cfg["metric"], "forecast": (str(forecast).strip() or None) if forecast is not None else None,
+           "previous": (str(previous).strip() or None) if previous is not None else None,
+           "actual": (str(actual).strip() or None) if actual is not None else None,
+           "stage": None, "v": 0.0, "bias": None, "size": None, "text": None}
+
+    def ratio(d):
+        return round(abs(d) / unit, 6)             # bulatkan: 0.3 - 0.2 = 0.0999999... harus terbaca 1 unit
+
+    def mag(d):
+        return _clamp(-math.copysign(min(1.0, ratio(d) / 2.0), d))
+
+    def size(d):
+        r = ratio(d)
+        return "kecil" if r < 1 else "sedang" if r < 2 else "besar"
+
+    if f is not None and a is not None:
+        d = round(a - f, 9)
+        out["stage"] = "actual"
+        if abs(d) < 1e-9:
+            out["text"] = f"Angka sesuai perkiraan ({out['actual']} = {out['forecast']}). Tidak ada kejutan, arah ditentukan oleh reaksi harga."
+        else:
+            hot = d > 0
+            out.update(v=round(mag(d), 3), bias="SELL" if hot else "BUY", size=size(d),
+                       text=(f"Angka {out['actual']} {'di atas' if hot else 'di bawah'} perkiraan {out['forecast']} (kejutan {size(d)}): "
+                             f"dolar cenderung {'menguat' if hot else 'melemah'}, emas cenderung {'turun' if hot else 'naik'}."))
+    elif f is not None and p is not None:
+        d = round(f - p, 9)
+        out["stage"] = "forecast"
+        if abs(d) < 1e-9:
+            out["text"] = f"Perkiraan sama dengan angka sebelumnya ({out['forecast']}). Belum ada kecondongan dari angka."
+        else:
+            hot = d > 0
+            out.update(v=round(0.5 * mag(d), 3), bias="SELL" if hot else "BUY", size=size(d),
+                       text=(f"Pasar memperkirakan angka {'lebih tinggi' if hot else 'lebih rendah'} dari sebelumnya "
+                             f"({out['forecast']} vs {out['previous']}): condong ke {'dolar kuat, emas tertekan' if hot else 'dolar lemah, emas terbantu'}. "
+                             "Perkiraan sudah banyak masuk harga, jadi bobotnya kecil."))
+    return out
+
+
+# ---------------------------------------------- kalender Forex Factory (Forecast & Previous)
+FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+_feed = {"at": 0.0, "rows": None, "ok": False, "err": None}
+FEED_TTL, FEED_FAIL_TTL = 20 * 60, 10 * 60
+
+
+def _feed_rows(now_ts=None, fetch=None):
+    """Baca feed mingguan (di-cache). Kembalikan list baris atau None. Tidak pernah melempar error."""
+    t = time.time() if now_ts is None else now_ts
+    if os.getenv("NEWS_FEED", "").strip().lower() in ("off", "0", "no"):
+        return None
+    ttl = FEED_TTL if _feed["ok"] else FEED_FAIL_TTL
+    if _feed["at"] and t - _feed["at"] < ttl:
+        return _feed["rows"]
+    _feed["at"] = t
+    try:
+        if fetch is not None:
+            rows = fetch()
+        else:
+            r = requests.get(os.getenv("NEWS_FEED_URL", FEED_URL), timeout=6,
+                             headers={"User-Agent": "Mozilla/5.0 (sinyal-xauusd)"})
+            r.raise_for_status()
+            rows = r.json()
+        if not isinstance(rows, list):
+            raise ValueError("format feed tidak dikenal")
+        _feed.update(rows=rows, ok=True, err=None)
+    except Exception as e:  # noqa: BLE001
+        _feed.update(ok=False, err=f"{type(e).__name__}: {e}"[:160])
+        if _feed["rows"] is None:
+            _feed["rows"] = None
+    return _feed["rows"]
+
+
+def _row_utc_date(row):
+    s = str(row.get("date") or row.get("dateRaw") or "")
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).date()
+
+
+def feed_values(ev, rows=None):
+    """Forecast/Previous/Actual berita `ev` dari feed, atau None bila tidak ada/tidak cocok."""
+    cfg = SURPRISE_CFG.get(ev["type"])
+    if not cfg:
+        return None
+    rows = rows if rows is not None else _feed_rows()
+    if not rows:
+        return None
+    day = datetime.fromisoformat(ev["t0"]).astimezone(timezone.utc).date()
+    for title in cfg["feed"]:                      # urutan = prioritas (mis. Core CPI dulu)
+        for r in rows:
+            if str(r.get("country", "")).upper() != "USD" or str(r.get("title", "")).strip() != title:
+                continue
+            d = _row_utc_date(r)
+            if d is None or abs((d - day).days) > 1:
+                continue
+            return {"title": title, "forecast": r.get("forecast") or None,
+                    "previous": r.get("previous") or None, "actual": r.get("actual") or None}
+    return None
+
+
+def feed_status():
+    return {"ok": _feed["ok"], "error": _feed["err"]}
+
+
 # ------------------------------------------------------------------ sinyal
 def _r2(x):
     return None if x is None else round(float(x), 2)
 
 
-def pre_signal(summary, ctx_dir, live, pre_hi=None, pre_lo=None):
-    """Sinyal SEBELUM rilis. Arah hanya bila statistik riwayat cukup kuat; selain itu WAIT + zona breakout."""
+def _strength(s):
+    a = abs(s)
+    return "SEDANG" if a >= 0.45 else "LEMAH" if a >= 0.2 else "SANGAT LEMAH"
+
+
+def _fac(key, name, v, w, note, additive=False):
+    """additive=True: faktor pendukung kecil. Menggeser skor tanpa ikut menjadi pembagi rata-rata,
+    sehingga faktor lemah yang searah tidak malah menurunkan kekuatan bukti."""
+    return {"key": key, "name": name, "value": round(v, 2), "weight": w, "note": note, "additive": additive}
+
+
+def _combine(factors):
+    main = [f for f in factors if not f.get("additive")]
+    wsum = sum(f["weight"] for f in main)
+    base = 0.0 if wsum == 0 else sum(f["weight"] * f["value"] for f in main) / wsum
+    extra = sum(f["weight"] * f["value"] for f in factors if f.get("additive"))
+    return _clamp(base + extra)
+
+
+def _warn_rr(out):
+    lv = out.get("levels") or {}
+    rr = lv.get("rr1")
+    if rr is not None and rr < 1:
+        out["reasons"].append(f"Rasio TP1 terhadap SL hanya {rr:.2f}: potensi untung kecil dibanding risiko. "
+                              "Pakai ukuran sangat kecil atau lewati.")
+
+
+def pre_signal(summary, ctx_dir, live, pre_hi=None, pre_lo=None, h1_score=None, sur=None):
+    """Sinyal SEBELUM rilis. Skor dari tren H1, kecenderungan riwayat, dan (bila ada) Forecast vs Previous.
+    Selalu memberi arah bila ada minimal satu faktor; kekuatan bukti ditampilkan apa adanya."""
     out = {"kind": "PRA", "direction": "WAIT", "strength": None, "confidence": 0,
-           "reasons": [], "levels": None, "straddle": None}
+           "reasons": [], "levels": None, "straddle": None, "factors": [], "score": None}
     n = summary.get("n", 0)
-    if n < MIN_N:
-        out["reasons"].append(f"Riwayat hanya {n} kejadian (minimal {MIN_N}). Tidak ada bias statistik, jadi tidak ada sinyal arah.")
-    else:
+    fx = []
+
+    if h1_score is not None:
+        v = _clamp(h1_score / 5.0)
+        fx.append(_fac("trend", "Tren H1", v, W_TREND, f"skor indikator H1 {h1_score:+d} dari ±5"))
+    elif ctx_dir in ("BUY", "SELL"):
+        fx.append(_fac("trend", "Tren H1", 0.6 if ctx_dir == "BUY" else -0.6, W_TREND, f"tren H1 {ctx_dir}"))
+
+    sig_hist = False
+    if n >= 3:
         u = summary["up60"]
-        bias = "BUY" if u["lo"] > 0.5 else "SELL" if u["hi"] < 0.5 else None
-        out["reasons"].append(f"Dalam {n} kejadian terakhir, harga naik pada menit ke-60 sebanyak {u['k']} kali ({round(u['rate']*100)}%).")
-        if bias is None:
-            out["reasons"].append("Selisih naik/turun belum cukup jelas secara statistik (interval kepercayaan 95% masih mencakup 50%). Tidak ada bias arah.")
-        elif ctx_dir not in ("WAIT", None, bias):
-            out["reasons"].append(f"Bias riwayat {bias}, tetapi tren H1 sekarang berlawanan ({ctx_dir}). Dibatalkan, tunggu reaksi.")
-        else:
-            out["direction"] = bias
-            out["strength"] = "SEDANG" if ctx_dir == bias else "LEMAH"
-            lo = u["lo"] if bias == "BUY" else 1 - u["hi"]
-            out["confidence"] = min(60, round(lo * 100))
-            out["reasons"].append(f"Bias {bias} lolos uji statistik; tren H1 {'searah' if ctx_dir == bias else 'netral'}.")
-            if live is not None:
-                sg = 1 if bias == "BUY" else -1
-                sl_d = summary["adv_long"]["p75"] if bias == "BUY" else summary["fav_long"]["p75"]
-                tp1 = summary["fav_long"]["p50"] if bias == "BUY" else summary["adv_long"]["p50"]
-                tp2 = summary["fav_long"]["p75"] if bias == "BUY" else summary["adv_long"]["p75"]
+        shrink = n / (n + 4.0)                      # sampel kecil ditahan (n=6 -> 60%)
+        v = (u["rate"] - 0.5) * 2 * shrink
+        sig_hist = u["lo"] > 0.5 or u["hi"] < 0.5
+        fx.append(_fac("hist", "Riwayat reaksi", v, W_HIST,
+                       f"{u['k']} dari {n} kejadian naik di menit ke-60"
+                       f"{' (signifikan secara statistik)' if sig_hist else f' (sampel kecil, pengaruh ditahan {round((1 - shrink) * 100)}%)'}"))
+
+    if sur and sur.get("stage") == "forecast" and abs(sur["v"]) > 0:
+        fx.append(_fac("fcst", "Forecast vs Previous", sur["v"], W_FCST, sur["text"], additive=True))
+
+    out["factors"] = fx
+    if not fx:
+        out["reasons"].append("Belum ada data untuk menentukan arah: harga H1 dan riwayat reaksi belum termuat.")
+        return out
+
+    s = _combine(fx)
+    out["score"] = round(s, 3)
+    if abs(s) < FLOOR_PRE:
+        out["reasons"].append("Faktor-faktor saling meniadakan (skor hampir nol). Tidak ada arah yang lebih unggul; tunggu reaksi setelah rilis.")
+    else:
+        d = "BUY" if s > 0 else "SELL"
+        out["direction"] = d
+        out["strength"] = _strength(s)
+        out["confidence"] = min(100, round(abs(s) * 100))
+        parts = ", ".join(f"{f['name']} {'BUY' if f['value'] > 0 else 'SELL' if f['value'] < 0 else 'netral'} ({f['value']:+.2f})" for f in fx)
+        out["reasons"].append(f"Arah {d} dari skor gabungan {s:+.2f}: {parts}.")
+        trend_f = next((f for f in fx if f["key"] == "trend"), None)
+        hist_f = next((f for f in fx if f["key"] == "hist"), None)
+        if trend_f and hist_f and trend_f["value"] * hist_f["value"] < 0:
+            out["reasons"].append("Tren H1 dan riwayat reaksi berlawanan arah. Keyakinan diturunkan secara otomatis.")
+        if n < MIN_N:
+            out["reasons"].append(f"Riwayat baru {n} kejadian (idealnya minimal {MIN_N}), jadi bukti statistik masih lemah.")
+        elif not sig_hist:
+            out["reasons"].append("Riwayat reaksi belum cukup konsisten secara statistik; pengaruhnya ditahan.")
+        out["reasons"].append("Ini kecenderungan dari data, bukan prediksi. Arah sebelum rilis sering berbalik oleh angka berita. "
+                              "Paling aman: ukuran kecil, atau tunggu reaksi setelah rilis.")
+        if live is not None and n >= 3:
+            sg = 1 if d == "BUY" else -1
+            sl_d = summary["adv_long"]["p75"] if d == "BUY" else summary["fav_long"]["p75"]
+            tp1 = summary["fav_long"]["p50"] if d == "BUY" else summary["adv_long"]["p50"]
+            tp2 = summary["fav_long"]["p75"] if d == "BUY" else summary["adv_long"]["p75"]
+            if sl_d and tp1 is not None and tp2 is not None:
                 out["levels"] = {"entry": _r2(live), "stop_loss": _r2(live - sg * sl_d),
                                  "tp1": _r2(live + sg * tp1), "tp2": _r2(live + sg * tp2),
-                                 "risk_points": _r2(sl_d), "rr1": _r2(tp1 / sl_d) if sl_d else None}
+                                 "risk_points": _r2(sl_d), "rr1": _r2(tp1 / sl_d)}
+                _warn_rr(out)
                 out["reasons"].append("SL, TP1, TP2 diambil dari sebaran pergerakan 60 menit pada kejadian lalu (SL = persentil 75 gerak melawan arah).")
+        elif live is not None:
+            out["reasons"].append("Level SL/TP belum dihitung karena riwayat reaksi masih kurang dari 3 kejadian.")
     if n >= 3 and pre_hi is not None and pre_lo is not None:
         mr = summary.get("med_range60") or 0
         buf = 0.15 * mr
         out["straddle"] = {"buy_above": _r2(pre_hi + buf), "sell_below": _r2(pre_lo - buf),
                            "typical_move_60m": _r2(mr),
-                           "note": "Tunggu rilis. Masuk hanya setelah candle M5 menutup di luar zona ini, jangan menebak arah."}
+                           "note": "Alternatif lebih aman: tunggu rilis, masuk hanya setelah candle M5 menutup di luar zona ini."}
     return out
 
 
-def post_signal(summary, p0, last_close, minutes_since):
-    """Sinyal SESUDAH rilis berdasarkan reaksi harga sejauh ini dibanding riwayat."""
-    out = {"kind": "PASCA", "direction": "WAIT", "confidence": 0, "reasons": [], "levels": None}
-    if minutes_since < SETTLE_MIN:
-        out["kind"] = "RILIS"
-        out["reasons"].append("Rilis baru keluar. Spread lebar dan harga acak. Tunggu minimal 5 menit, jangan entry sekarang.")
-        return out
+def post_signal(summary, p0, last_close, minutes_since, sur=None):
+    """Sinyal SESUDAH rilis: reaksi harga (bobot terbesar) + kejutan angka (Actual vs Forecast) + pola lanjutan riwayat."""
+    out = {"kind": "PASCA", "direction": "WAIT", "strength": None, "confidence": 0,
+           "reasons": [], "levels": None, "factors": [], "score": None}
+    n = summary.get("n", 0)
     r_now = last_close - p0
     out["reaction"] = {"p0": _r2(p0), "move": _r2(r_now), "minutes": round(minutes_since)}
-    if summary.get("n", 0) < MIN_N:
-        out["reasons"].append(f"Riwayat hanya {summary.get('n', 0)} kejadian: reaksi tidak bisa dinilai secara statistik.")
+    sv = sur["v"] if sur and sur.get("stage") == "actual" else None
+    if sur and sur.get("stage") == "actual":
+        out["reasons"].append(sur["text"])
+    if minutes_since < SETTLE_MIN:
+        out["kind"] = "RILIS"
+        out["lean"] = sur["bias"] if sv else None
+        out["reasons"].append("Rilis baru keluar. Spread lebar dan harga acak. Tunggu candle M5 pertama menutup (minimal 5 menit) sebelum entry.")
+        if out["lean"]:
+            out["reasons"].append(f"Arah awal dari angka: {out['lean']}. Masuk hanya bila harga setelah 5 menit ikut bergerak ke arah itu.")
         return out
-    thr = summary["med_abs_r15"]
-    cont = summary["cont"]
-    big = abs(r_now) >= thr
-    out["reasons"].append(f"Gerak sejak rilis {r_now:+.2f} poin; gerak 15 menit yang biasa (median) {thr:.2f} poin.")
-    if not big:
-        out["reasons"].append("Reaksi belum sebesar biasanya. Belum ada sinyal.")
+
+    scale = summary.get("med_abs_r15") if n >= 3 else None
+    if scale and scale > 0:
+        vp = _clamp(r_now / (2.0 * scale))
+        pnote = f"gerak {r_now:+.2f} poin sejak rilis; gerak 15 menit yang biasa {scale:.2f} poin"
+    else:
+        vp = 0.0 if r_now == 0 else math.copysign(0.3, r_now)
+        pnote = f"gerak {r_now:+.2f} poin sejak rilis (skala riwayat belum tersedia)"
+    fx = [_fac("price", "Reaksi harga", vp, W_PRICE, pnote)]
+    if sv is not None:
+        fx.append(_fac("surp", "Kejutan angka", sv, W_SURP, sur["text"]))
+    cont = summary.get("cont") or {}
+    if n >= 3 and cont.get("n", 0) >= 3 and cont.get("rate") is not None and abs(vp) >= 0.5:
+        fx.append(_fac("cont", "Pola lanjutan riwayat", math.copysign((cont["rate"] - 0.5) * 2, r_now), W_CONT,
+                       f"pada reaksi besar, harga lanjut searah {cont['k']} dari {cont['n']} kali", additive=True))
+    out["factors"] = fx
+    s = _combine(fx)
+    out["score"] = round(s, 3)
+    if sv is not None and vp * sv < 0 and abs(vp) > 0.15 and abs(sv) > 0.15:
+        out["reasons"].append("Angka dan harga bertentangan: pasar tidak sependapat dengan kejutan angka. Reaksi harga diberi bobot lebih besar.")
+    if abs(s) < FLOOR_POST:
+        out["reasons"].append("Reaksi harga belum jelas (gerak kecil atau saling meniadakan dengan angka). Tunggu candle berikutnya.")
         return out
-    if cont["n"] < 3 or cont["rate"] is None or cont["rate"] < 0.6:
-        out["reasons"].append(f"Pada reaksi sebesar ini, harga hanya lanjut searah {cont['k']} dari {cont['n']} kali. Tidak cukup meyakinkan.")
-        return out
-    d = "BUY" if r_now > 0 else "SELL"
+    d = "BUY" if s > 0 else "SELL"
     sg = 1 if d == "BUY" else -1
-    buf = 0.1 * summary["med_range60"]
-    sl = p0 - sg * buf
-    ext = summary.get("ext") or {}
-    tp1, tp2 = max(ext.get("p50") or 0, 0), max(ext.get("p75") or 0, 0)
     out["direction"] = d
-    out["confidence"] = min(60, round(cont["lo"] * 100))
-    out["levels"] = {"entry": _r2(last_close), "stop_loss": _r2(sl),
-                     "tp1": _r2(last_close + sg * tp1), "tp2": _r2(last_close + sg * tp2),
-                     "risk_points": _r2(abs(last_close - sl))}
-    out["reasons"].append(f"Reaksi besar dan historis lanjut searah {cont['k']} dari {cont['n']} kali. SL di sisi harga sebelum rilis ({p0:.2f}), karena kembali ke sana berarti reaksi gagal.")
+    out["strength"] = _strength(s)
+    out["confidence"] = min(100, round(abs(s) * 100))
+    out["reasons"].append(f"Arah {d} dari skor gabungan {s:+.2f}. Ini kecenderungan dari data, bukan prediksi.")
+    if n < MIN_N:
+        out["reasons"].append(f"Riwayat baru {n} kejadian (idealnya minimal {MIN_N}): bukti statistik masih lemah.")
+    if n >= 3:
+        aligned = sg * r_now > 0
+        if aligned:
+            sl = p0 - sg * 0.1 * summary["med_range60"]
+            ext = summary.get("ext") or {}
+            tp1, tp2 = max(ext.get("p50") or 0, 0), max(ext.get("p75") or 0, 0)
+            if tp1 <= 0 or tp2 <= 0:
+                tp1, tp2 = 0.5 * summary["med_abs_r60"], summary["med_abs_r60"]
+            out["reasons"].append(f"SL di sisi harga sebelum rilis ({p0:.2f}): kembali ke sana berarti reaksi gagal.")
+            risk = abs(last_close - sl)
+        else:
+            risk = summary["adv_long"]["p75"] if d == "BUY" else summary["fav_long"]["p75"]
+            tp1 = summary["fav_long"]["p50"] if d == "BUY" else summary["adv_long"]["p50"]
+            tp2 = summary["fav_long"]["p75"] if d == "BUY" else summary["adv_long"]["p75"]
+            sl = last_close - sg * risk
+            out["reasons"].append("Arah sinyal berlawanan dengan gerak harga sejak rilis, jadi SL/TP memakai sebaran gerak 60 menit riwayat.")
+        if risk and tp1 is not None and tp2 is not None:
+            tp2 = max(tp2, tp1)
+            out["levels"] = {"entry": _r2(last_close), "stop_loss": _r2(sl),
+                             "tp1": _r2(last_close + sg * tp1), "tp2": _r2(last_close + sg * tp2),
+                             "risk_points": _r2(abs(last_close - sl)), "rr1": _r2(tp1 / abs(last_close - sl))}
+            _warn_rr(out)
+    else:
+        out["reasons"].append("Level SL/TP belum dihitung karena riwayat reaksi masih kurang dari 3 kejadian.")
     return out
 
 

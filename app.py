@@ -368,7 +368,33 @@ def api_quote():
                    broker_utc_offset=boff, error=c["error"])
 
 
-def news_view(ev_id=None, now=None):
+def news_inputs(focus, manual=None):
+    """Forecast/Previous/Actual untuk berita fokus. Urutan: input manual > kalender Forex Factory > kosong."""
+    cfg = news.SURPRISE_CFG.get(focus["type"])
+    out = {"supported": bool(cfg), "metric": cfg["metric"] if cfg else None,
+           "forecast": None, "previous": None, "actual": None, "source": None, "feed_error": None}
+    if not cfg:
+        return out
+    near = -8 * 24 * 60 <= focus["minutes"] <= 24 * 60            # feed hanya memuat pekan berjalan
+    try:
+        fv = news.feed_values(focus) if near else None
+    except Exception:  # noqa: BLE001
+        fv = None
+    if fv:
+        out.update(metric=fv["title"], forecast=fv["forecast"], previous=fv["previous"], actual=fv["actual"],
+                   source="Forex Factory (otomatis)")
+    elif near:
+        st = news.feed_status()
+        out["feed_error"] = None if st["ok"] else (st["error"] or "kalender Forex Factory belum terbaca")
+    for k in ("forecast", "previous", "actual"):
+        v = (manual or {}).get(k)
+        if v:
+            out[k] = v
+            out["source"] = "input manual" if not fv else "Forex Factory + input manual"
+    return out
+
+
+def news_view(ev_id=None, now=None, manual=None):
     """Susun data halaman NEWS: daftar berita, studi riwayat jenis berita terpilih, dan sinyal."""
     ts = now or pd.Timestamp.now(tz="UTC")
     extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
@@ -388,20 +414,27 @@ def news_view(ev_id=None, now=None):
     summ = news.study(typ, dates)
     t0 = pd.Timestamp(focus["t0"])
     live = None if m5 is None else float(m5["close"].iloc[-1])
-    ctx = h1["direction"] if h1 and not h1.get("market_closed") else None
+    usable_h1 = bool(h1) and not h1.get("market_closed")
+    ctx = h1["direction"] if usable_h1 else None
+    h1_score = h1["score"] if usable_h1 else None
+    # Angka berita: Forecast/Previous dari kalender Forex Factory (bila terbaca), lalu ditimpa input manual.
+    inputs = news_inputs(focus, manual)
+    sur = news.surprise(typ, inputs["forecast"], inputs["previous"], inputs["actual"])
     out_focus = {**focus, "study": summ, "progress": prog, "live_price": live, "ctx_h1": ctx,
-                 "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})"}
+                 "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})",
+                 "inputs": inputs, "surprise": sur}
     if focus["status"] == "PRA":
         pre = m5[(m5["time"] >= t0 - pd.Timedelta(minutes=60)) & (m5["time"] < t0)] if m5 is not None else None
         hi = None if pre is None or len(pre) < 6 else float(pre["high"].max())
         lo = None if pre is None or len(pre) < 6 else float(pre["low"].min())
-        out_focus["signal"] = news.pre_signal(summ, ctx, live, hi, lo)
+        out_focus["signal"] = news.pre_signal(summ, ctx, live, hi, lo, h1_score=h1_score, sur=sur)
     elif focus["status"] in ("RILIS", "PASCA"):
         bar = None if m5 is None else m5[m5["time"] == t0]
-        if bar is None or len(bar) == 0:
-            out_focus["signal"] = {"kind": "PASCA", "direction": "WAIT", "reasons": ["Candle M5 saat rilis belum tersedia di sumber data."]}
+        if bar is None or len(bar) == 0 or live is None:
+            out_focus["signal"] = {"kind": "PASCA", "direction": "WAIT", "factors": [],
+                                   "reasons": ["Candle M5 saat rilis belum tersedia di sumber data."]}
         else:
-            out_focus["signal"] = news.post_signal(summ, float(bar["open"].iloc[0]), live, focus["minutes"])
+            out_focus["signal"] = news.post_signal(summ, float(bar["open"].iloc[0]), live, focus["minutes"], sur=sur)
     else:
         out_focus["signal"] = {"kind": "SELESAI", "direction": "WAIT", "reasons": ["Berita ini sudah selesai. Pilih berita berikutnya."]}
     shown = [e for e in evs if e["status"] != "SELESAI"][:6] + [e for e in evs if e["status"] == "SELESAI"][-2:]
@@ -421,7 +454,8 @@ def api_news_events():
 @app.get("/api/news")
 def api_news():
     try:
-        return jsonify(news_view(request.args.get("id")))
+        manual = {k: (request.args.get(q) or "").strip()[:12] for k, q in (("forecast", "f"), ("previous", "p"), ("actual", "a"))}
+        return jsonify(news_view(request.args.get("id"), manual=manual))
     except Exception as e:  # noqa: BLE001
         return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
 

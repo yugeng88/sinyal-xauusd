@@ -243,8 +243,8 @@ def news_pre_message(ev, sig, minutes_left, off=0.0):
     head = f"{ev['short']} {minutes_left:.0f} menit lagi · {wib(ev['t0'])}"
     lines = []
     if sig["direction"] in ("BUY", "SELL"):
-        lv = sig["levels"]
-        lines.append(f"Sinyal pra-news: {sig['direction']} ({(sig.get('strength') or '').lower()}, keyakinan {sig['confidence']}%)")
+        lv = sig.get("levels")
+        lines.append(f"Sinyal pra-news: {sig['direction']} ({(sig.get('strength') or '').lower()}, kekuatan bukti {sig['confidence']}%)")
         if lv:
             lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
     else:
@@ -253,17 +253,18 @@ def news_pre_message(ev, sig, minutes_left, off=0.0):
     if st:
         lines.append(f"Zona breakout: di atas {fp(st['buy_above'], off)} atau di bawah {fp(st['sell_below'], off)} "
                      f"(gerak umum 60 menit ±{st['typical_move_60m']:.0f} poin).")
-    lines.append("Spread melebar saat rilis. Bukan saran investasi.")
+    lines.append("Arah sebelum rilis sering berbalik oleh angka berita. Spread melebar saat rilis. Bukan saran investasi.")
     return head, "\n".join(lines)
 
 
 def news_post_message(ev, sig, off=0.0):
-    lv = sig["levels"]
+    lv = sig.get("levels")
     mv = sig["reaction"]["move"]
-    return (f"{ev['short']} · reaksi {sig['direction']}",
-            f"Gerak sejak rilis {mv:+.2f} poin, searah pola riwayat (keyakinan {sig['confidence']}%).\n"
-            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}\n"
-            "Bukan saran investasi.")
+    lines = [f"Gerak sejak rilis {mv:+.2f} poin (kekuatan bukti {sig['confidence']}%)."]
+    if lv:
+        lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
+    lines.append("Bukan saran investasi.")
+    return f"{ev['short']} · reaksi {sig['direction']}", "\n".join(lines)
 
 
 EXIT_REASON = {
