@@ -252,8 +252,17 @@ def api_signal():
                        symbols=SYMS, timeframes=TFS), 404
     native = mt5_signal(sym, tf)
     if native:
-        s = {"signal": native["signal"], "summary": native.get("summary"), "updated_at": native.get("updated_at"),
-             "error": None, "last_attempt": native.get("updated_at")}
+        # "diperbarui" = kiriman terakhir EA (tiap menit), bukan saat candle timeframe ini tutup.
+        upd = native.get("updated_at")
+        beat = mt5_alive_map().get(sym)
+        if beat:
+            beat_iso = datetime.fromtimestamp(beat, timezone.utc).isoformat()
+            try:
+                upd = beat_iso if not upd or pd.Timestamp(beat_iso) > pd.Timestamp(upd) else upd
+            except (ValueError, TypeError):
+                upd = beat_iso
+        s = {"signal": native["signal"], "summary": native.get("summary"), "updated_at": upd,
+             "error": None, "last_attempt": upd}
         s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                          "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
                  symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True)
