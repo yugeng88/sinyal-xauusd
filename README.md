@@ -1,10 +1,25 @@
-# Sinyal XAUUSD & NASDAQ (v16)
+# Sinyal XAUUSD & NASDAQ (v17)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
 Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUAN_MT5.txt`).
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
+
+
+## Yang baru di v17: 3-strategy consensus untuk sinyal teknikal
+
+Mesin sinyal teknikal XAUUSD di `signals.py` kini memakai tiga setup tambahan dan menerbitkan BUY/SELL hanya jika minimal dua strategi memberi arah yang sama:
+
+1. **Liquidity Sweep Reversal** — candle menembus swing 12 candle sebelumnya lalu ditutup kembali di dalam range dengan rejection wick.
+2. **Trend Pullback** — tren EMA20/EMA50, pullback di sekitar EMA20 (toleransi 0,35 ATR), candle konfirmasi, dan RSI di sisi 50.
+3. **Momentum Breakout** — close menembus high/low 20 candle sebelumnya dengan body minimal 0,5 ATR.
+
+Dashboard menampilkan hasil tiap strategi, jumlah suara, dan status konsensus. Sinyal historis yang dipakai fitur tracking juga menggunakan aturan konsensus baru. Strategi lama EMA/RSI/perubahan 24 jam tetap dihitung dan ditampilkan sebagai pembanding (`legacy_direction`), bukan dihapus. Alur sinyal NASDAQ tetap memakai metode v16; perubahan konsensus hanya diterapkan untuk XAUUSD.
+
+**Penting:** aturan ini adalah versi awal berbasis OHLC dan belum terbukti menghasilkan profit. Angka confidence 70/90 adalah skor jumlah strategi yang setuju, bukan probabilitas menang. Target drawdown di bawah 10% belum dapat diklaim tanpa backtest tick data, spread, komisi, slippage, dan validasi out-of-sample. Gunakan akun demo terlebih dahulu.
+
+Uji mesin strategi: `python -m unittest tests.test_strategies -v`.
 
 ## Yang baru di v16: tab NEWS selalu memberi arah
 
@@ -53,13 +68,13 @@ jadi Actual diketik manual tepat setelah rilis di kartu "Angka berita". Bila fee
    - `NEWS_FEED=off` untuk mematikan pembacaan kalender Forex Factory (angka diisi manual saja).
    - `NEWS_FEED_URL` untuk mengganti alamat feed.
    - Lainnya seperti sebelumnya: `TWELVEDATA_API_KEY`, `CRON_SECRET`, `NTFY_TOPIC`, `NEWS_CALLS_PER_MIN`, `NEWS_PRE_MIN`, `EXTRA_EVENTS`, dst.
-3. Tunggu status **Ready**. Di bawah dasbor tertulis "Versi 16".
+3. Tunggu status **Ready**. Di bawah dasbor tertulis "Versi 17".
 
 ## Upload ke GitHub dari iPhone (tanpa PC)
 
 1. Buka zip di aplikasi **Files** (ketuk file zip, otomatis terekstrak jadi folder).
 2. Buka repositori `sinyal-xauusd` di Safari (github.com) → **Add file** → **Upload files**.
-3. Pilih file dari folder hasil ekstrak. Untuk pembaruan v16 cukup **news.py, app.py, notify.py, index.html, page.py** (tambahan baru: `README.md`, `build_page.py`, `.gitignore`, folder `tests` bila mau).
+3. Pilih file dari folder hasil ekstrak. Untuk pembaruan v17 cukup **signals.py, app.py, index.html, page.py, README.md, tests/test_strategies.py** (file v16 lain tetap dipertahankan) (tambahan baru: `README.md`, `build_page.py`, `.gitignore`, folder `tests` bila mau).
 4. Tulis pesan commit, tekan **Commit changes**. Vercel membangun ulang otomatis.
 
 ## Menjalankan uji

@@ -78,6 +78,58 @@ def max_move_pct(df, minutes, bars):
     return float(vals.max()) if len(vals) else 0.0
 
 
+def strategy_arrays(df):
+    """Tiga setup kausal berbasis candle tertutup; tidak memakai candle masa depan.
+
+    Strategi: liquidity sweep reversal, trend-pullback, dan momentum breakout.
+    Konsensus BUY/SELL hanya muncul bila sedikitnya dua strategi searah.
+    Ini adalah aturan awal untuk diuji, bukan edge/profit yang sudah terbukti.
+    """
+    c = df["close"].astype(float)
+    o = df["open"].astype(float)
+    h = df["high"].astype(float)
+    l = df["low"].astype(float)
+    a = atr(df)
+    e20, e50 = ema(c, 20), ema(c, 50)
+    rv = rsi(c)
+
+    prior_low = l.shift(1).rolling(12, min_periods=12).min()
+    prior_high = h.shift(1).rolling(12, min_periods=12).max()
+    body = (c - o).abs()
+    lower_wick = pd.concat([o, c], axis=1).min(axis=1) - l
+    upper_wick = h - pd.concat([o, c], axis=1).max(axis=1)
+
+    # 1) Sweep: harga menembus swing 12 candle lalu close kembali di dalam range.
+    sweep_buy = (l < prior_low) & (c > prior_low) & (c > o) & (lower_wick >= body * 0.5)
+    sweep_sell = (h > prior_high) & (c < prior_high) & (c < o) & (upper_wick >= body * 0.5)
+
+    # 2) Pullback: tren EMA20/50, sentuh area EMA20 dalam toleransi 0.35 ATR,
+    # lalu candle tutup kembali searah tren dengan RSI di sisi 50.
+    tol = a * 0.35
+    pull_buy = (e20 > e50) & (l <= e20 + tol) & (c > e20) & (c > o) & (rv > 50)
+    pull_sell = (e20 < e50) & (h >= e20 - tol) & (c < e20) & (c < o) & (rv < 50)
+
+    # 3) Breakout: close melewati high/low 20 candle sebelumnya dengan body >= 0.5 ATR.
+    range_high = h.shift(1).rolling(20, min_periods=20).max()
+    range_low = l.shift(1).rolling(20, min_periods=20).min()
+    break_buy = (c > range_high) & (c > o) & (body >= a * 0.5)
+    break_sell = (c < range_low) & (c < o) & (body >= a * 0.5)
+
+    names = ("liquidity_sweep", "trend_pullback", "momentum_breakout")
+    buy = np.column_stack([sweep_buy, pull_buy, break_buy]).astype(bool)
+    sell = np.column_stack([sweep_sell, pull_sell, break_sell]).astype(bool)
+    buy_n, sell_n = buy.sum(axis=1), sell.sum(axis=1)
+    direction = np.where(buy_n >= 2, "BUY", np.where(sell_n >= 2, "SELL", "WAIT"))
+    count = np.where(direction == "BUY", buy_n, np.where(direction == "SELL", sell_n, 0))
+    return {
+        "direction": direction,
+        "confidence": np.where(count == 3, 90, np.where(count == 2, 70, 0)).astype(int),
+        "votes": count.astype(int),
+        "strategies": {name: np.where(buy[:, i], "BUY", np.where(sell[:, i], "SELL", "WAIT"))
+                       for i, name in enumerate(names)},
+    }
+
+
 # ------------------------------------------------------------------ analisis
 def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
             chart_bars=None, now=None, closed_only=True):
@@ -130,10 +182,32 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         else:
             reasons.append(f"Perubahan 24 jam {chg:+.2f}%: datar (skor 0)")
 
-    direction = "BUY" if score >= 3 else "SELL" if score <= -3 else "WAIT"
-
+    legacy_direction = "BUY" if score >= 3 else "SELL" if score <= -3 else "WAIT"
     warnings = []
-    conf = round(abs(score) / MAX_SCORE * 100)
+    strategy_engine = None
+    if symbol == "XAUUSD":
+        strat = strategy_arrays(df)
+        direction = str(strat["direction"][-1])
+        conf = int(strat["confidence"][-1])
+        votes = int(strat["votes"][-1])
+        strategy_labels = {
+            "liquidity_sweep": "Liquidity Sweep Reversal",
+            "trend_pullback": "Trend Pullback",
+            "momentum_breakout": "Momentum Breakout",
+        }
+        strategy_status = {strategy_labels[k]: str(v[-1]) for k, v in strat["strategies"].items()}
+        strategy_engine = {"name": "3-Strategy Consensus", "minimum_votes": 2,
+                           "votes": votes, "strategies": strategy_status,
+                           "status": "CONFIRMED" if direction != "WAIT" else "WAIT"}
+        if direction == "WAIT":
+            reasons.append("Konfirmasi strategi belum mencapai minimal 2 dari 3 strategi yang searah.")
+        else:
+            agreeing = [name for name, side in strategy_status.items() if side == direction]
+            reasons.append(f"Konsensus {votes}/3 strategi untuk {direction}: " + ", ".join(agreeing) + ".")
+        reasons.append(f"Arah indikator lama: {legacy_direction} (dipertahankan sebagai informasi pembanding).")
+    else:
+        direction = legacy_direction
+        conf = round(abs(score) / MAX_SCORE * 100)
     if direction == "BUY" and rsi_v >= 75:
         conf = max(conf - 10, 0)
         warnings.append("RSI overbought: risiko koreksi, pertimbangkan entry bertahap")
@@ -170,6 +244,8 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         "direction": direction,
         "score": score,
         "max_score": MAX_SCORE,
+        "legacy_direction": legacy_direction,
+        "strategy_engine": strategy_engine,
         "confidence": conf,
         "price": round(price, 2),
         "live_price": round(live_price, 2),
@@ -199,7 +275,7 @@ def summary_text(sig):
 
 
 # ------------------------------------------------- sinyal untuk semua candle
-def issue_arrays(df):
+def issue_arrays(df, symbol="XAUUSD"):
     """Arah, keyakinan, harga, dan ATR untuk SETIAP candle sekaligus.
 
     EMA/RSI/ATR bersifat kausal (adjust=False), jadi nilainya di candle i sama
@@ -216,15 +292,19 @@ def issue_arrays(df):
         score = (np.where(e20 > e50, 2, -2) + np.where(cv > e100, 1, -1)
                  + np.where(r > 55, 1, np.where(r < 45, -1, 0))
                  + np.where(chg > 0.5, 1, np.where(chg < -0.5, -1, 0)))
-    direction = np.where(score >= 3, "BUY", np.where(score <= -3, "SELL", "WAIT"))
-    conf = np.round(np.abs(score) / MAX_SCORE * 100)
-    pen = ((direction == "BUY") & (r >= 75)) | ((direction == "SELL") & (r <= 25))
-    conf = np.maximum(conf - 10 * pen, 0).astype(int)
+    if symbol == "XAUUSD":
+        strat = strategy_arrays(df)
+        direction, conf = strat["direction"], strat["confidence"]
+    else:
+        direction = np.where(score >= 3, "BUY", np.where(score <= -3, "SELL", "WAIT"))
+        conf = np.round(np.abs(score) / MAX_SCORE * 100)
+        pen = ((direction == "BUY") & (r >= 75)) | ((direction == "SELL") & (r <= 25))
+        conf = np.maximum(conf - 10 * pen, 0).astype(int)
     return {"direction": direction, "conf": conf, "price": cv, "atr": a}
 
 
-def _issue_from_arrays(closed):
-    ar = issue_arrays(closed)
+def _issue_from_arrays(closed, symbol="XAUUSD"):
+    ar = issue_arrays(closed, symbol=symbol)
 
     def fn(i):
         d = str(ar["direction"][i])
@@ -248,7 +328,7 @@ def _hits(direction, lv, high, low):
     return high >= lv["stop_loss"], sum(1 for t in lv["tp"] if low <= t)
 
 
-def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars=None):
+def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars=None, symbol="XAUUSD"):
     """Kembalikan {"active", "recent", "stats", "expiry_hours"}.
 
     - Sinyal hanya diterbitkan dari candle TERTUTUP; candle berjalan hanya dipakai
@@ -265,7 +345,7 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
     cooldown = COOLDOWN_BARS if cooldown_bars is None else cooldown_bars
     now = now or pd.Timestamp.now(tz="UTC")
     closed, forming = split_closed(df, now, minutes)
-    issue_fn = issue_fn or _issue_from_arrays(closed)
+    issue_fn = issue_fn or _issue_from_arrays(closed, symbol=symbol)
     n = len(closed)
     start = min(119, max(n - 1, 0))
     blocked = {"BUY": -10 ** 9, "SELL": -10 ** 9}

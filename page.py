@@ -157,7 +157,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 16 · sinyal news BUY/SELL + pembaca Forecast/Actual · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 17 · 3-strategy consensus XAUUSD + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -244,7 +244,8 @@ function render(s){
     ${L?`<div class="grid" style="margin-top:12px">${cells}</div>`:`<p class="empty">${closed?"Pasar tampaknya tutup.":"Belum ada setup yang cukup selaras."} Tidak ada level entry saat ini.<br><small>Kotak konfirmasi M1 akan muncul di sini begitu ada sinyal BUY atau SELL aktif.</small></p>`}
     <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan${A?" (saat terbit)":""}</span><b>${conf}%</b></div>
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
-    <p class="note">Keselarasan indikator${A?"":" (skor "+(sig.score>0?"+":"")+sig.score+" dari ±"+sig.max_score+")"}, bukan peluang profit.</p></div>`;
+    <p class="note">Keselarasan strategi${A?" (saat terbit)":""}, bukan peluang profit.</p></div>
+    ${sig.strategy_engine?`<div class="note-box" style="margin-top:12px"><b>Strategy Engine · ${esc(sig.strategy_engine.votes)}/3 konfirmasi</b><div class="sub">Minimal 2 strategi harus searah sebelum sinyal diterbitkan.</div><div class="grid" style="margin-top:8px">${Object.entries(sig.strategy_engine.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${side===d?'tp':(side==='WAIT'?'':'sl')}">${esc(side)}</b></div>`).join("")}</div></div>`:""}`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;

@@ -103,7 +103,7 @@ def _refresh(sym, tf):
         df, source, note = data.get_candles(sym, tf)
         sig = signals.analyze(df, source, symbol=sym, label=data.SYMBOLS[sym]["label"],
                               note=note, tf=tf)
-        sig["tracking"] = signals.track(df, tf=tf)
+        sig["tracking"] = signals.track(df, tf=tf, symbol=sym)
         raw[(sym, tf)] = df.tail(400)
     except Exception as e:  # noqa: BLE001
         with lock:
@@ -252,17 +252,8 @@ def api_signal():
                        symbols=SYMS, timeframes=TFS), 404
     native = mt5_signal(sym, tf)
     if native:
-        # "diperbarui" = kiriman terakhir EA (tiap menit), bukan saat candle timeframe ini tutup.
-        upd = native.get("updated_at")
-        beat = mt5_alive_map().get(sym)
-        if beat:
-            beat_iso = datetime.fromtimestamp(beat, timezone.utc).isoformat()
-            try:
-                upd = beat_iso if not upd or pd.Timestamp(beat_iso) > pd.Timestamp(upd) else upd
-            except (ValueError, TypeError):
-                upd = beat_iso
-        s = {"signal": native["signal"], "summary": native.get("summary"), "updated_at": upd,
-             "error": None, "last_attempt": upd}
+        s = {"signal": native["signal"], "summary": native.get("summary"), "updated_at": native.get("updated_at"),
+             "error": None, "last_attempt": native.get("updated_at")}
         s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                          "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
                  symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True)
@@ -781,7 +772,7 @@ def mt5_ingest(j):
                 out["notes"].append(f"{sym} {tf}: candle hanya {len(df)}, butuh minimal 130 (naikkan JumlahBar di EA)")
                 continue
             sig = signals.analyze(df, f"MT5 {broker}", symbol=sym, label=data.SYMBOLS[sym]["label"], tf=tf)
-            sig["tracking"] = signals.track(df, tf=tf)
+            sig["tracking"] = signals.track(df, tf=tf, symbol=sym)
             sig.update(broker_native=True, broker_symbol=broker)
             sig = _jsonable(sig)
             rec = {"signal": sig, "summary": signals.summary_text(sig), "updated_at": now().isoformat()}
