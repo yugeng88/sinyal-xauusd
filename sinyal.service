@@ -1,0 +1,16 @@
+[Unit]
+Description=Sinyal XAUUSD & NASDAQ (v18)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sinyal
+WorkingDirectory=/opt/sinyal
+EnvironmentFile=/opt/sinyal/.env
+Environment=INTERNAL_CRON=1
+ExecStart=/opt/sinyal/venv/bin/gunicorn wsgi:app --workers 1 --threads 8 --bind 127.0.0.1:8000 --timeout 120
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

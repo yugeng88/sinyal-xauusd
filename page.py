@@ -18,7 +18,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--font);
   display:flex;justify-content:center;
   background-image:radial-gradient(900px 400px at 85% -10%,#2a1a2e55,transparent),
                    radial-gradient(700px 400px at 0% 100%,#16225255,transparent)}
-main{width:100%;max-width:460px;display:grid;gap:14px}
+main{width:100%;max-width:460px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+main>*{min-width:0}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 h1{font-size:22px;font-weight:700;letter-spacing:.2px}
@@ -72,6 +73,7 @@ h2{font-size:15px;margin-bottom:8px}
 .tf{flex:1;background:transparent;color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:8px 0;font:600 13px var(--font);cursor:pointer}
 .tf[aria-selected="true"]{color:var(--text);border-color:#4a5688;background:#171c35}
 .confirm{margin-top:8px;font-size:13px;line-height:1.5;border-radius:8px;padding:9px 11px;border:1px solid var(--line)}
+.confirm.bad{border-color:#6b1f1f;background:#241010}.confirm.bad>b{color:var(--sell)}.confirm.ok>b{color:var(--buy)}
 .confirm.ok{border-color:#1f6b3d;background:#10241a}.confirm.wait{border-color:#6b5a1f;background:#241f10}.confirm.na{background:#171a2c}
 .confirm ul{list-style:none;padding:0;margin:6px 0 0}.confirm li{display:flex;gap:6px;justify-content:space-between;font-size:12.5px;padding:2px 0}
 .confirm .y{color:var(--buy)}.confirm .n{color:var(--sell)}.confirm small{color:var(--mute)}
@@ -79,7 +81,7 @@ h2{font-size:15px;margin-bottom:8px}
 .calbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#10142a}
 .calbox h3{font-size:14px;margin:0 0 4px}.calbox .brow{margin:8px 0}
 .offchip{font-size:12px;color:var(--wait);margin-top:4px}
-body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard, body.onnews #histcard, body.onnews #brokercard{display:none !important}
+body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard, body.onnews #histcard, body.onnews #brokercard, body.onnews #riskcard{display:none !important}
 #newsview{display:none} body.onnews #newsview{display:grid;gap:14px}
 .evs{display:flex;flex-wrap:wrap;gap:6px}
 .ev{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:600 12px var(--font);cursor:pointer;text-align:left;line-height:1.35}
@@ -141,6 +143,14 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <div class="brow"><input id="sp" inputmode="decimal" autocomplete="off" placeholder="Spread broker (poin), mis. 0.36" aria-label="Spread broker dalam poin"></div>
     <div id="bout"></div>
   </section>
+  <section class="card" id="riskcard" hidden>
+    <h2>Manajemen risiko · <span id="rkname"></span></h2>
+    <p class="note" id="rkprof"></p>
+    <p class="note">Isi berurutan: saldo akun (USD) · risiko per trade (%) · nilai per 1,00 poin untuk 1 lot (USD). Tersimpan di perangkat ini, terpisah untuk tiap instrumen.</p>
+    <div class="brow"><input id="rkbal" inputmode="decimal" autocomplete="off" placeholder="Saldo akun (USD)" aria-label="Saldo akun"><input id="rkpct" inputmode="decimal" autocomplete="off" placeholder="Risiko per trade (%)" aria-label="Risiko per trade dalam persen"></div>
+    <div class="brow"><input id="rkpv" inputmode="decimal" autocomplete="off" placeholder="Nilai per 1,00 poin per 1 lot (USD)" aria-label="Nilai per poin per lot"></div>
+    <div id="rkout"></div>
+  </section>
   <section class="card" id="sumcard" hidden>
     <h2>Ringkasan teknikal</h2>
     <p class="summary" id="summary"></p>
@@ -157,7 +167,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 17 · 3-strategy consensus XAUUSD + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 18 · dual-instrument: 3-strategy consensus XAUUSD & NASDAQ + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -217,7 +227,7 @@ function render(s){
   if(A){
     const mv = A.move_points, R = A.levels.risk_points;
     const tpTxt = A.tp_hit>0 ? "TP"+A.tp_hit+" sudah tercapai" : "belum ada TP tercapai";
-    status = `<div class="status-box"><b>Sinyal ${A.direction} aktif</b>, terbit ${ageText(A.age_hours)} lalu. Level dikunci saat terbit.<br>
+    status = `<div class="status-box"><b>Sinyal ${A.direction} aktif</b>, terbit ${ageText(A.age_hours)} lalu. Level dikunci saat terbit. Masuk hanya setelah M1 menyatakan ENTRY SIAP.<br>
       Harga sekarang ${fp(live)} (${mv>0?"+":""}${fmt(mv)} poin dari entry) · ${tpTxt}.<br>
       Berlaku sampai SL, TP3, atau sekitar ${leftText(Math.max(0,A.expires_in_hours))} lagi.
       ${sig.direction!==A.direction && !closed ? `<br><span class="mute">Indikator saat ini: ${sig.direction==="WAIT"?"TUNGGU":sig.direction} (skor ${sig.score>0?"+":""}${sig.score}). Sinyal tetap berlaku sampai berakhir.</span>`:""}
@@ -256,22 +266,40 @@ function render(s){
   $("src").textContent = "Sumber: " + sig.source;
   renderConfirm();
   updateBroker();
+  updateRisk();
 }
 
+const CF = {
+  CONFIRMED:{cls:"ok",  t:"ENTRY SIAP · M1 terkonfirmasi"},
+  WAIT:{cls:"wait",     t:"MENUNGGU KONFIRMASI M1 · jangan entry dulu"},
+  CHASED:{cls:"bad",    t:"TERLAMBAT · harga sudah mengejar, lewati setup ini"},
+  LATE:{cls:"bad",      t:"TERLAMBAT · batas waktu entry lewat, lewati setup ini"},
+  INVALID:{cls:"bad",   t:"SETUP BATAL · harga sudah menyentuh SL"}
+};
 function renderConfirm(){
   const box = $("confbox"); if(!box) return;
   const A = activeOf(last && last.signal);
-  if(!A){ box.innerHTML = ""; return; }
+  if(!A){ box.innerHTML = ""; updateRisk(); return; }
   const j = lastConfirm, c = j && j.signal_time === A.time ? j.confirm : null;
-  if(!c){ box.innerHTML = '<div class="confirm na">Konfirmasi M1: memuat…</div>'; return; }
-  if(!c.checks){ box.innerHTML = `<div class="confirm na"><b>Konfirmasi M1 belum tersedia.</b><br>${esc(c.message||"")}</div>`; return; }
-  const ok = c.state === "CONFIRMED";
+  if(!c){ box.innerHTML = '<div class="confirm na">Konfirmasi M1: memuat…</div>'; updateRisk(); return; }
+  if(!c.checks){ box.innerHTML = `<div class="confirm na"><b>Konfirmasi M1 belum tersedia: jangan entry dulu.</b><br>${esc(c.message||"")}</div>`; updateRisk(); return; }
+  const ok = c.state === "CONFIRMED", m = CF[c.state] || CF.WAIT;
   const items = c.checks.map(x=>{
     const det = x.parts ? x.parts.map(p=>p.label+" "+(p.price ? fp(p.v) : fmt(p.v, p.d ?? 2))).join(" · ") : x.detail;
     return `<li><span>${x.ok?'<span class="y">✔</span>':'<span class="n">✖</span>'} ${esc(x.name)}</span><small>${esc(det)}</small></li>`; }).join("");
   const first = c.first_time ? `<br><small>${ok?"Pertama terkonfirmasi":"Sempat terkonfirmasi"} pukul ${esc(c.first_time.slice(11,16))} UTC di sekitar ${fp(c.first_price)}${ok?"":" (kini belum)"}.</small>` : "";
-  box.innerHTML = `<div class="confirm ${ok?"ok":"wait"}"><b>Konfirmasi M1: ${ok?"TERKONFIRMASI":"BELUM"}</b>${ok?` · harga M1 ${fp(c.price)}`:""}<ul>${items}</ul>${first}
+  const V = ok && c.live_levels ? c.live_levels : null;
+  const live = V ? `<div class="grid" style="margin-top:8px">
+      <div class="cell"><small>Entry sekarang (M1)</small><b>${fp(V.entry)}</b></div>
+      <div class="cell"><small>Stop loss</small><b class="sl">${fp(V.stop_loss)}</b></div>
+      ${V.tp.map((v,i)=>`<div class="cell"><small>TP${i+1} · RR 1:${V.rr[i]}</small><b class="tp">${fp(v)}</b></div>`).join("")}
+      <div class="cell"><small>Jarak risiko</small><b>${fmt(V.risk_points)}</b></div></div>` : "";
+  const meta = [c.chase_r!=null ? `Harga ${c.chase_r>0?"+":""}${fmt(c.chase_r)}R dari entry sinyal (batas ${fmt(c.zone_r)}R)` : "",
+                c.minutes_left!=null && c.state!=="LATE" ? `sisa waktu entry ${Math.round(c.minutes_left)} menit` : ""].filter(Boolean).join(" · ");
+  box.innerHTML = `<div class="confirm ${m.cls}"><b>${m.t}</b>${ok?` · harga M1 ${fp(c.price)}`:""}
+    ${c.reason?`<br><span>${esc(c.reason)}</span>`:""}${live}<ul>${items}</ul>${meta?`<small>${esc(meta)}</small>`:""}${first}
     <br><small>Aturan heuristik, bukan jaminan. Sumber M1: ${esc(c.source||"–")}.</small>${c.warning?`<br><small>${esc(c.warning)}</small>`:""}</div>`;
+  updateRisk();
 }
 async function loadConfirm(my){
   const A = activeOf(last && last.signal);
@@ -282,6 +310,36 @@ async function loadConfirm(my){
   }catch(e){ if(my!==seq) return; lastConfirm = {signal_time:A.time, confirm:{state:"ERROR", message:"Tidak bisa menghubungi server."}}; }
   renderConfirm();
 }
+
+function updateRisk(){
+  const card = $("riskcard"), out = $("rkout"), sig = last && last.signal;
+  if(!card) return;
+  if(!sig || !sig.risk_profile){ card.hidden = true; return; }
+  const p = sig.risk_profile, k = sig.symbol; card.hidden = false;
+  $("rkname").textContent = sig.label || k;
+  $("rkprof").textContent = `SL dinamis: struktur 8 candle + buffer ${p.sl_buffer} ATR, dibatasi ${p.sl_min}–${p.sl_max} ATR (cadangan ${p.atr_mult} ATR). TP = ${p.rr.join(" / ")} × risiko. Batas mengejar ${p.zone_r}R. Entry hanya dalam ${p.max_age_bars} candle ${sig.timeframe} setelah sinyal terbit.`;
+  if(card.dataset.sym !== k){                       // isi ulang hanya saat ganti instrumen (jangan menimpa ketikan)
+    card.dataset.sym = k;
+    $("rkbal").value = ls("rkbal") || "";
+    $("rkpct").value = ls("rkpct_"+k) || p.risk_pct;
+    $("rkpv").value  = ls("rkpv_"+k)  || p.point_value;
+  }
+  const A = activeOf(sig), j = lastConfirm, c = j && A && j.signal_time === A.time ? j.confirm : null;
+  const LV = c && c.state === "CONFIRMED" && c.live_levels ? c.live_levels : levelsOf(sig);
+  const bal = parseFloat(String($("rkbal").value).replace(",",".")), pct = parseFloat(String($("rkpct").value).replace(",",".")), pv = parseFloat(String($("rkpv").value).replace(",","."));
+  if(!LV){ out.innerHTML = '<p class="note">Belum ada level aktif. Hitungan lot muncul saat ada sinyal.</p>'; return; }
+  if(!(bal>0 && pct>0 && pv>0)){ out.innerHTML = '<p class="note">Isi saldo, risiko %, dan nilai poin untuk menghitung lot.</p>'; return; }
+  const amt = bal*pct/100, raw = amt/(LV.risk_points*pv), lots = Math.floor(raw*100+1e-9)/100;
+  out.innerHTML = `<div class="grid" style="margin-top:8px">
+    <div class="cell"><small>Risiko uang</small><b>${fmt(amt)} USD</b></div>
+    <div class="cell"><small>Jarak SL${c && c.state==="CONFIRMED" ? " (dari M1)" : " (sinyal)"}</small><b>${fmt(LV.risk_points)}</b></div>
+    <div class="cell"><small>Lot maksimum</small><b>${lots.toFixed(2)}</b></div>
+    <div class="cell"><small>Rugi bila SL</small><b class="sl">${fmt(lots*LV.risk_points*pv)} USD</b></div></div>
+    <p class="note">${lots<0.01?"Risiko uang terlalu kecil untuk lot minimum 0,01 pada jarak SL ini: naikkan saldo, kecilkan risiko, atau lewati setup. Jangan membulatkan ke atas. ":""}${pct>2?"Risiko di atas 2% per trade tergolong agresif. ":""}Nilai per poin per lot berbeda antar broker: cek spesifikasi kontrak simbol Anda. Lot dibulatkan ke bawah 0,01; periksa lot minimum dan margin di broker.</p>`;
+}
+["rkbal","rkpct","rkpv"].forEach(id=>{ const el = $(id); if(el) el.addEventListener("input", ()=>{
+  const k = cur; if(id==="rkbal") ls("rkbal", el.value.trim()); else ls(id+"_"+k, el.value.trim());
+  updateRisk(); }); });
 
 function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k)||""; if(v) localStorage.setItem(k,v); else localStorage.removeItem(k); }catch(e){ return ""; } }
 function parsePrice(raw, ref){

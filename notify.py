@@ -231,12 +231,14 @@ def signal_message(label, tf, a, off=0.0):
 
 
 def confirm_message(label, tf, a, c, off=0.0):
-    lv = a["levels"]
+    lv = c.get("live_levels") or a["levels"]
     since = f"\nPertama terkonfirmasi {c['first_time'][11:16]} UTC di sekitar {fp(c['first_price'], off)}." if c.get("first_time") else ""
-    return (f"{label} {tf} · {a['direction']} TERKONFIRMASI M1",
-            f"Harga M1 {fp(c['price'], off)} (di zona entry).\n"
-            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp'][0], off)}{since}\n"
-            "Bukan saran investasi.")
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
+    left = f"\nBatas waktu entry sisa {c['minutes_left']:.0f} menit." if c.get("minutes_left") is not None else ""
+    return (f"{label} {tf} · {a['direction']} ENTRY SIAP (M1 terkonfirmasi)",
+            f"Harga M1 {fp(c['price'], off)} (di zona entry, {c.get('chase_r', 0):+.2f}R dari entry sinyal).\n"
+            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | risiko {lv['risk_points']:.2f}\n{tps}{left}{since}\n"
+            "Jangan mengejar jika harga sudah menjauh. Bukan saran investasi.")
 
 
 def news_pre_message(ev, sig, minutes_left, off=0.0):

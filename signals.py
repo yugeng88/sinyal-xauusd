@@ -15,6 +15,62 @@ MAX_SCORE = 5
 SPIKE_PCT = float(os.getenv("SPIKE_PCT", "2.0"))    # per candle H1; diskalakan untuk TF lain
 COOLDOWN_BARS = int(os.getenv("COOLDOWN_BARS", "4"))  # jeda setelah SL sebelum sinyal arah sama
 ZONE_R = float(os.getenv("ZONE_R", "0.5"))          # batas "mengejar" harga: 0,5 x jarak SL
+CONSENSUS_SYMBOLS = ("XAUUSD", "NASDAQ")            # instrumen yang memakai mesin 3-strategi
+
+
+# ------------------------------------------------ profil risiko per instrumen (v18)
+# Nilai awal (bisa diubah lewat env, mis. ATR_MULT_NASDAQ=2.0). Env khusus instrumen menang atas env umum
+# (ATR_MULT), lalu default di bawah. Default NASDAQ lebih lebar karena indeks lebih berisik dan sering gap;
+# itu asumsi awal untuk diamati di akun demo, bukan hasil backtest.
+_PROFILE_DEFAULTS = {
+    "XAUUSD": dict(atr_mult=1.5, sl_min=1.0, sl_max=2.5, sl_buffer=0.1, rr="2,3,4",
+                   zone_r=0.5, max_age_bars=2, risk_pct=1.0, point_value=100.0),
+    "NASDAQ": dict(atr_mult=1.8, sl_min=1.2, sl_max=3.0, sl_buffer=0.1, rr="2,3,4",
+                   zone_r=0.4, max_age_bars=2, risk_pct=0.5, point_value=1.0),
+}
+
+
+def _envf(name, sym, default):
+    raw = os.getenv(f"{name}_{sym}") or os.getenv(name)
+    try:
+        return float(raw) if raw not in (None, "") else float(default)
+    except ValueError:
+        return float(default)
+
+
+def _parse_rr(raw, default):
+    try:
+        v = tuple(float(x) for x in str(raw).split(","))
+        if len(v) == 3 and all(x > 0 for x in v) and list(v) == sorted(v):
+            return v
+    except ValueError:
+        pass
+    return tuple(float(x) for x in default.split(","))
+
+
+def profile(symbol):
+    """Pengaturan risiko aktif untuk satu instrumen (env dibaca tiap panggilan)."""
+    sym = symbol if symbol in _PROFILE_DEFAULTS else "XAUUSD"
+    d = _PROFILE_DEFAULTS[sym]
+    rr_raw = os.getenv(f"RR_{sym}") or os.getenv("RR_LEVELS") or d["rr"]
+    return {
+        "symbol": sym,
+        "atr_mult": _envf("ATR_MULT", sym, d["atr_mult"]),
+        "sl_min": _envf("SL_MIN_ATR", sym, d["sl_min"]),
+        "sl_max": _envf("SL_MAX_ATR", sym, d["sl_max"]),
+        "sl_buffer": _envf("SL_BUFFER_ATR", sym, d["sl_buffer"]),
+        "rr": _parse_rr(rr_raw, d["rr"]),
+        "zone_r": _envf("ZONE_R", sym, d["zone_r"]),
+        "max_age_bars": int(_envf("ENTRY_MAX_BARS", sym, d["max_age_bars"])),
+        "risk_pct": _envf("RISK_PCT", sym, d["risk_pct"]),
+        "point_value": _envf("POINT_VALUE", sym, d["point_value"]),
+    }
+
+
+def public_profile(symbol):
+    p = profile(symbol)
+    p["rr"] = list(p["rr"])
+    return p
 
 
 # ---------------------------------------------------------------- indikator
@@ -57,15 +113,27 @@ def split_closed(df, now, minutes=60):
     return df, None
 
 
-def make_levels(direction, price, atr_v):
+def make_levels(direction, price, atr_v, symbol="XAUUSD", struct=None):
+    """SL/TP dinamis per instrumen.
+
+    SL = jarak ke ekstrem struktur terakhir (`struct`) + buffer, dibatasi antara sl_min dan sl_max x ATR.
+    Tanpa struktur, SL = atr_mult x ATR. TP = risiko x RR instrumen (skala mengikuti jarak SL nyata).
+    """
+    p = profile(symbol)
     sign = 1 if direction == "BUY" else -1
-    risk = ATR_MULT * atr_v
+    risk, mode = p["atr_mult"] * atr_v, "atr"
+    if struct is not None and np.isfinite(struct) and struct > 0:
+        raw = float(struct) + p["sl_buffer"] * atr_v
+        risk = min(max(raw, p["sl_min"] * atr_v), p["sl_max"] * atr_v)
+        mode = "structure"
     return {
         "entry": round(price, 2),
         "stop_loss": round(price - sign * risk, 2),
-        "tp": [round(price + sign * risk * k, 2) for k in RR_LEVELS],
-        "rr": list(RR_LEVELS),
+        "tp": [round(price + sign * risk * k, 2) for k in p["rr"]],
+        "rr": list(p["rr"]),
         "risk_points": round(risk, 2),
+        "sl_mode": mode,
+        "risk_atr": round(risk / atr_v, 2) if atr_v > 0 else None,
     }
 
 
@@ -121,8 +189,13 @@ def strategy_arrays(df):
     buy_n, sell_n = buy.sum(axis=1), sell.sum(axis=1)
     direction = np.where(buy_n >= 2, "BUY", np.where(sell_n >= 2, "SELL", "WAIT"))
     count = np.where(direction == "BUY", buy_n, np.where(direction == "SELL", sell_n, 0))
+    # Jarak close ke ekstrem struktur 8 candle (termasuk candle ini): dasar SL dinamis.
+    swing_lo, swing_hi = l.rolling(8, min_periods=1).min(), h.rolling(8, min_periods=1).max()
+    stop_dist = np.where(direction == "BUY", (c - swing_lo).to_numpy(),
+                         np.where(direction == "SELL", (swing_hi - c).to_numpy(), np.nan)).astype(float)
     return {
         "direction": direction,
+        "stop_dist": stop_dist,
         "confidence": np.where(count == 3, 90, np.where(count == 2, 70, 0)).astype(int),
         "votes": count.astype(int),
         "strategies": {name: np.where(buy[:, i], "BUY", np.where(sell[:, i], "SELL", "WAIT"))
@@ -185,8 +258,10 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
     legacy_direction = "BUY" if score >= 3 else "SELL" if score <= -3 else "WAIT"
     warnings = []
     strategy_engine = None
-    if symbol == "XAUUSD":
+    struct = None
+    if symbol in CONSENSUS_SYMBOLS:
         strat = strategy_arrays(df)
+        struct = float(strat["stop_dist"][-1])
         direction = str(strat["direction"][-1])
         conf = int(strat["confidence"][-1])
         votes = int(strat["votes"][-1])
@@ -230,7 +305,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         warnings.append(f"Ada lonjakan {spike:.2f}% dalam satu candle {tf} pada {chart_bars} candle terakhir. "
                         "Periksa apakah datanya benar sebelum memakai sinyal.")
 
-    levels = make_levels(direction, price, atr_v) if direction != "WAIT" else None
+    levels = make_levels(direction, price, atr_v, symbol, struct) if direction != "WAIT" else None
 
     tail = df.tail(chart_bars)
     return {
@@ -246,6 +321,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         "max_score": MAX_SCORE,
         "legacy_direction": legacy_direction,
         "strategy_engine": strategy_engine,
+        "risk_profile": public_profile(symbol),
         "confidence": conf,
         "price": round(price, 2),
         "live_price": round(live_price, 2),
@@ -269,7 +345,7 @@ def summary_text(sig):
             "WAIT": "Belum ada setup jelas, sebaiknya menunggu."}[d]
     if sig.get("market_closed"):
         head = "Pasar tampaknya tutup, tidak ada sinyal baru."
-    body = " ".join(r.split(" (skor")[0] + "." for r in sig["reasons"])
+    body = " ".join(r.split(" (skor")[0].rstrip(".") + "." for r in sig["reasons"])
     tail = f" Skor indikator {sig['score']:+d} dari ±{sig['max_score']}."
     return f"{head} {body}{tail}"
 
@@ -292,15 +368,16 @@ def issue_arrays(df, symbol="XAUUSD"):
         score = (np.where(e20 > e50, 2, -2) + np.where(cv > e100, 1, -1)
                  + np.where(r > 55, 1, np.where(r < 45, -1, 0))
                  + np.where(chg > 0.5, 1, np.where(chg < -0.5, -1, 0)))
-    if symbol == "XAUUSD":
+    stop = np.full(len(cv), np.nan)
+    if symbol in CONSENSUS_SYMBOLS:
         strat = strategy_arrays(df)
-        direction, conf = strat["direction"], strat["confidence"]
+        direction, conf, stop = strat["direction"], strat["confidence"], strat["stop_dist"]
     else:
         direction = np.where(score >= 3, "BUY", np.where(score <= -3, "SELL", "WAIT"))
         conf = np.round(np.abs(score) / MAX_SCORE * 100)
         pen = ((direction == "BUY") & (r >= 75)) | ((direction == "SELL") & (r <= 25))
         conf = np.maximum(conf - 10 * pen, 0).astype(int)
-    return {"direction": direction, "conf": conf, "price": cv, "atr": a}
+    return {"direction": direction, "conf": conf, "price": cv, "atr": a, "stop": stop}
 
 
 def _issue_from_arrays(closed, symbol="XAUUSD"):
@@ -310,7 +387,8 @@ def _issue_from_arrays(closed, symbol="XAUUSD"):
         d = str(ar["direction"][i])
         if d == "WAIT":
             return "WAIT", None, 0
-        return d, make_levels(d, float(ar["price"][i]), float(ar["atr"][i])), int(ar["conf"][i])
+        return (d, make_levels(d, float(ar["price"][i]), float(ar["atr"][i]), symbol, float(ar["stop"][i])),
+                int(ar["conf"][i]))
     return fn
 
 
@@ -443,15 +521,24 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
 
 
 # --------------------------------------------------------- konfirmasi M1
-def confirm_m1(m1, direction, levels, issued_close, now=None):
-    """Konfirmasi entri di M1 untuk sinyal dari timeframe lebih besar.
+def entry_deadline(issued_close, tf, symbol="XAUUSD"):
+    """Batas waktu entry: sinyal hanya boleh dieksekusi dalam max_age_bars candle TF setelah terbit."""
+    if not tf or tf not in D.TF:
+        return None
+    return pd.Timestamp(issued_close) + pd.Timedelta(minutes=profile(symbol)["max_age_bars"] * D.TF[tf]["minutes"])
 
-    TERKONFIRMASI bila pada candle M1 tertutup terakhir SEMUA benar:
+
+def confirm_m1(m1, direction, levels, issued_close, now=None, symbol="XAUUSD", tf=None):
+    """Konfirmasi entri M1 (WAJIB sebelum entry) + proteksi entry terlambat.
+
+    CONFIRMED bila pada candle M1 tertutup terakhir SEMUA benar:
       1) EMA9 berada di sisi arah terhadap EMA21
       2) close berada di sisi arah terhadap EMA9
       3) RSI(14) di sisi arah terhadap 50 (>50 untuk BUY, <50 untuk SELL)
-      4) harga belum menyentuh SL dan belum "mengejar" lebih dari ZONE_R x jarak SL
-         dari entry sinyal
+      4) harga belum menyentuh SL dan belum "mengejar" lebih dari zone_r x jarak SL dari entry sinyal
+      5) masih dalam batas waktu entry (max_age_bars candle TF sejak sinyal terbit)
+    Status lain: WAIT (belum), CHASED (harga sudah mengejar), LATE (batas waktu lewat), INVALID (SL tersentuh).
+    Saat CONFIRMED, `live_levels` memberi Entry/TP dari harga M1 sekarang dengan SL sinyal yang sama.
     Aturan ini heuristik; belum divalidasi sebagai peningkat hasil.
     """
     now = now or pd.Timestamp.now(tz="UTC")
@@ -463,26 +550,35 @@ def confirm_m1(m1, direction, levels, issued_close, now=None):
     if age_min > D.TF["M1"]["stale_h"] * 60:
         return {"state": "STALE",
                 "message": f"Candle M1 terakhir {age_min:.0f} menit lalu (pasar tutup atau data tertunda)."}
+    prof = profile(symbol)
+    zone_r = prof["zone_r"]
     sign = 1 if direction == "BUY" else -1
     entry, sl, risk = levels["entry"], levels["stop_loss"], levels["risk_points"]
+    dl = entry_deadline(issued_close, tf, symbol)
+    late = dl is not None and pd.Timestamp(now) > dl
     c = closed["close"]
     e9, e21, r = ema(c, 9), ema(c, 21), rsi(c)
     trend = ((e9 - e21) * sign > 0)
     side = ((c - e9) * sign > 0)
     mom = ((r - 50) * sign > 0)
     if direction == "BUY":
-        zone = (c > sl) & (c <= entry + ZONE_R * risk)
+        zone = (c > sl) & (c <= entry + zone_r * risk)
     else:
-        zone = (c < sl) & (c >= entry - ZONE_R * risk)
+        zone = (c < sl) & (c >= entry - zone_r * risk)
     flag = trend & side & mom & zone
     after = (closed["time"] >= issued_close).to_numpy()
-    hit = np.where(flag.to_numpy() & after)[0]
+    in_win = np.ones(len(closed), bool) if dl is None else ((closed["time"] + pd.Timedelta(minutes=1)) <= dl).to_numpy()
+    hit = np.where(flag.to_numpy() & after & in_win)[0]
     first = None if len(hit) == 0 else int(hit[0])
-    now_ok = bool(flag.iloc[-1]) and bool(after[-1])
+    now_ok = bool(flag.iloc[-1]) and bool(after[-1]) and not late
     px = float(c.iloc[-1])
+    chase_r = (px - entry) * sign / risk if risk else 0.0
+    broken = (px - sl) * sign <= 0
+    state = ("CONFIRMED" if now_ok else "INVALID" if broken else "LATE" if late
+             else "CHASED" if chase_r > zone_r else "WAIT")
     up = "atas" if direction == "BUY" else "bawah"
     e9v, e21v, rv = float(e9.iloc[-1]), float(e21.iloc[-1]), float(r.iloc[-1])
-    limit = entry + sign * ZONE_R * risk
+    limit = entry + sign * zone_r * risk
     checks = [
         {"name": f"EMA9 di {up} EMA21", "ok": bool(trend.iloc[-1]),
          "detail": f"{e9v:.2f} vs {e21v:.2f}",
@@ -497,10 +593,29 @@ def confirm_m1(m1, direction, levels, issued_close, now=None):
          "parts": [{"label": "Harga", "v": px, "price": True}, {"label": "SL", "v": sl, "price": True},
                    {"label": "Batas kejar", "v": limit, "price": True}]},
     ]
-    out = {"state": "CONFIRMED" if now_ok else "WAIT", "checks": checks,
+    if dl is not None:
+        checks.append({"name": f"Masih dalam batas waktu entry ({prof['max_age_bars']} candle {tf})",
+                       "ok": not late, "detail": f"sampai {dl.strftime('%H:%M')} UTC"})
+    reasons = {
+        "INVALID": "Harga sudah menyentuh stop loss sinyal. Setup batal, jangan entry.",
+        "LATE": "Batas waktu entry sudah lewat. Lewati setup ini dan tunggu sinyal baru.",
+        "CHASED": f"Harga sudah bergerak {chase_r:.2f}R dari entry sinyal (batas {zone_r:g}R). Jangan mengejar.",
+    }
+    if state == "WAIT" and not bool(after[-1]):
+        reasons["WAIT"] = "Menunggu candle M1 pertama setelah candle sinyal tertutup."
+    out = {"state": state, "checks": checks,
            "m1_time": closed.iloc[-1]["time"].isoformat(), "price": round(px, 2),
-           "first_time": None, "first_price": None}
+           "first_time": None, "first_price": None, "chase_r": round(chase_r, 2) + 0.0,
+           "zone_r": zone_r, "deadline": None if dl is None else dl.isoformat(),
+           "minutes_left": None if dl is None else round(max(0.0, (dl - pd.Timestamp(now)).total_seconds() / 60), 1),
+           "reason": reasons.get(state)}
     if first is not None:
         out["first_time"] = closed.iloc[first]["time"].isoformat()
         out["first_price"] = round(float(c.iloc[first]), 2)
+    if state == "CONFIRMED":
+        risk_now = abs(px - sl)
+        rr = levels.get("rr") or list(profile(symbol)["rr"])
+        out["live_levels"] = {"entry": round(px, 2), "stop_loss": sl,
+                              "tp": [round(px + sign * risk_now * k, 2) for k in rr],
+                              "rr": rr, "risk_points": round(risk_now, 2)}
     return out

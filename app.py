@@ -22,6 +22,11 @@ import notify
 import page
 import signals
 
+VERSION = "18"
+# v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
+# SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
+REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
+SETUP_ALERT = os.getenv("SETUP_ALERT", "0").strip() == "1"
 UPDATE_MINUTES = max(int(os.getenv("UPDATE_MINUTES", "15")), 1)   # khusus H1
 PORT = int(os.getenv("PORT", "8000"))
 SYMS = list(data.SYMBOLS)
@@ -140,6 +145,11 @@ def _drain():
     return out
 
 
+def _was_notified(sym, tf, t):
+    """Entry sudah dikabarkan (peringatan setup lama `sig:` atau ENTRY SIAP `cfm:`)."""
+    return notify.seen(f"sig:{sym}:{tf}:{t}") or notify.seen(f"cfm:{sym}:{tf}:{t}")
+
+
 EXIT_FRESH_MIN = 30            # menit: sinyal yang berakhir lebih lama dari ini tidak dikabarkan lagi
 
 
@@ -160,7 +170,7 @@ def maybe_notify_exit(sym, tf, sig, click=None):
             continue
         if (t_now - pd.Timestamp(r["end_time"])).total_seconds() > limit:
             continue                                   # sudah lama berakhir: jangan kirim kabar basi
-        if not notify.seen(f"sig:{sym}:{tf}:{r['time']}"):
+        if not _was_notified(sym, tf, r["time"]):
             continue                                   # sinyal ini dulu tidak dikabarkan: tidak perlu KELUAR
         new_dir = a["direction"] if (r["outcome"] == "REVERSED" and a) else None
         renewed = (r["outcome"] == "EXPIRED" and a and a["direction"] == r["direction"]
@@ -176,7 +186,7 @@ def maybe_notify_exit(sym, tf, sig, click=None):
             _sent_log.append({"jenis": "keluar_" + r["outcome"].lower(), "target": f"{sym}:{tf}", "hasil": res})
     if a and sig.get("score") is not None:
         sg = 1 if a["direction"] == "BUY" else -1
-        if sg * sig["score"] <= 0 and notify.seen(f"sig:{sym}:{tf}:{a['time']}"):
+        if sg * sig["score"] <= 0 and _was_notified(sym, tf, a["time"]):
             price = sig.get("live_price") or sig["price"]
             title, msg = notify.weak_message(sig["label"], tf, a, sig["score"], sig["max_score"], price, off)
             res = notify.deliver(f"weak:{sym}:{tf}:{a['time']}", title, msg, 4, ["warning"], click)
@@ -191,6 +201,8 @@ def maybe_notify_signal(sym, tf, sig, click=None):
         maybe_notify_exit(sym, tf, sig, click)
     except Exception:  # noqa: BLE001  - kabar keluar tidak boleh menggagalkan sinyal baru
         pass
+    if REQUIRE_M1 and not SETUP_ALERT:
+        return None                                    # v18: entry baru diumumkan setelah M1 terkonfirmasi (cron/MT5)
     a = sig["tracking"]["active"] if sig.get("tracking") else None
     if not a or sig.get("market_closed") or a["age_hours"] * 60 > max(3 * tf_minutes(tf), 15):
         return None
@@ -331,7 +343,8 @@ def api_confirm():
                        symbol=sym, tf=tf, signal_time=a["time"])
     try:
         out = signals.confirm_m1(c["df"], a["direction"], a["levels"],
-                                 pd.Timestamp(a["time_close"]), now=pd.Timestamp.now(tz="UTC"))
+                                 pd.Timestamp(a["time_close"]), now=pd.Timestamp.now(tz="UTC"),
+                                 symbol=sym, tf=tf)
     except Exception as e:  # noqa: BLE001
         out = {"state": "ERROR", "message": f"{type(e).__name__}: {e}"}
     out["source"] = c["source"]
@@ -505,12 +518,12 @@ def parse_targets(raw):
     return out
 
 
-def compute_confirm(sym, a):
+def compute_confirm(sym, tf, a):
     c = get_m1(sym)
     if c["df"] is None:
         return None
     return signals.confirm_m1(c["df"], a["direction"], a["levels"], pd.Timestamp(a["time_close"]),
-                              now=pd.Timestamp.now(tz="UTC"))
+                              now=pd.Timestamp.now(tz="UTC"), symbol=sym, tf=tf)
 
 
 def cron_run(ts=None, click=None):
@@ -557,7 +570,7 @@ def cron_run(ts=None, click=None):
             continue
         ck = f"cfm:{sym}:{tf}:{a['time']}" if a else None
         if a and not sig.get("market_closed") and not notify.seen(ck):
-            c = compute_confirm(sym, a)
+            c = compute_confirm(sym, tf, a)
             if c and c.get("state") == "CONFIRMED":
                 title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym))
                 r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], click)
@@ -810,7 +823,8 @@ def mt5_ingest(j):
         if not a or sig.get("market_closed") or sym not in m1s:
             continue
         ck = f"cfm:{sym}:{tf}:{a['time']}"
-        c = signals.confirm_m1(m1s[sym], a["direction"], a["levels"], pd.Timestamp(a["time_close"]), now=feed_time)
+        c = signals.confirm_m1(m1s[sym], a["direction"], a["levels"], pd.Timestamp(a["time_close"]), now=feed_time,
+                               symbol=sym, tf=tf)
         c = _jsonable({**c, "source": f"MT5 {sig.get('broker_symbol', sym)}", "signal_time": a["time"]})
         st_key = (c.get("state"), c.get("m1_time"))
         if _mt5["cfm_state"].get((sym, tf)) != st_key:
@@ -844,9 +858,16 @@ def api_diag():
     return jsonify(symbol=sym, tf=tf, cached=False, sources=rows)
 
 
+@app.get("/api/risk")
+def api_risk():
+    """Profil risiko aktif per instrumen (SL/TP dinamis, batas mengejar, batas waktu entry, ukuran lot)."""
+    return jsonify(version=VERSION, require_m1=REQUIRE_M1, setup_alert=SETUP_ALERT,
+                   profiles={s: signals.public_profile(s) for s in SYMS})
+
+
 @app.get("/healthz")
 def healthz():
-    return jsonify(ok=True, has_signal={f"{s}/{t}": states[(s, t)]["signal"] is not None
+    return jsonify(ok=True, version=VERSION, has_signal={f"{s}/{t}": states[(s, t)]["signal"] is not None
                                         for s in SYMS for t in TFS})
 
 
@@ -855,8 +876,20 @@ def index():
     return Response(page.HTML, mimetype="text/html")
 
 
+def internal_cron_loop():
+    """Opsional untuk VPS (INTERNAL_CRON=1): menjalankan cron_run tiap menit tanpa crontab luar."""
+    while True:
+        try:
+            cron_run(click=app_url())
+        except Exception:  # noqa: BLE001  - loop tidak boleh mati
+            pass
+        time.sleep(60)
+
+
 def start_background():
     threading.Thread(target=loop, daemon=True, name="updater").start()
+    if os.getenv("INTERNAL_CRON", "").strip() == "1":
+        threading.Thread(target=internal_cron_loop, daemon=True, name="cron").start()
 
 
 if __name__ == "__main__":
