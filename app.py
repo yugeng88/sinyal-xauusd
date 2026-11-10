@@ -22,7 +22,7 @@ import notify
 import page
 import signals
 
-VERSION = "18"
+VERSION = "18.1"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -695,7 +695,10 @@ def _mt5_frame(rows, data_time=None):
 def _fresh_native(rec, tf):
     if not rec or not rec.get("signal"):
         return None
-    ct = pd.Timestamp(rec["signal"]["candle_time"])
+    sg = rec["signal"]
+    if sg.get("symbol") in signals.CONSENSUS_SYMBOLS and not sg.get("strategy_engine"):
+        return None                                    # rekaman dari versi lama (tanpa mesin 3-strategi): anggap kedaluwarsa
+    ct = pd.Timestamp(sg["candle_time"])
     return rec if pd.Timestamp.now(tz="UTC") - ct <= pd.Timedelta(minutes=3 * tf_minutes(tf) + 5) else None
 
 
