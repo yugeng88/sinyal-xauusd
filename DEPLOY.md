@@ -1,13 +1,13 @@
-# Deploy v18
+# Deploy v19.0
 
 ## A. Vercel + GitHub (seperti sebelumnya)
 
 1. Upload semua file zip ini ke repositori GitHub (timpa file lama). Vercel membangun ulang otomatis.
 2. Variabel lingkungan lama tetap berlaku. Tidak ada yang wajib baru. Opsional: lihat `.env.example`.
 3. Pastikan penjadwal luar (cron-job.org atau sejenisnya) memanggil `https://DOMAIN/api/cron?key=CRON_SECRET` **tiap menit**.
-   Dengan v18 ini penting: notifikasi entry baru hanya dikirim setelah M1 terkonfirmasi, dan itu dicek oleh putaran cron
+   Dengan v19.0 ini penting: notifikasi entry baru hanya dikirim setelah M1 terkonfirmasi, dan itu dicek oleh putaran cron
    (atau oleh EA MT5 bila dipakai).
-4. Buka `https://DOMAIN/healthz`: harus menampilkan `"version": "18"`. Buka `https://DOMAIN/api/risk` untuk melihat profil aktif.
+4. Buka `https://DOMAIN/healthz`: harus menampilkan versi `19.0`. Buka `https://DOMAIN/api/risk` untuk melihat profil aktif.
 
 ## B. VPS (Ubuntu/Debian)
 
@@ -35,7 +35,7 @@ curl http://127.0.0.1:8000/healthz
 
 ## Pemeriksaan sesudah deploy
 
-1. Tab XAUUSD dan NASDAQ sama-sama menampilkan "Strategy Engine · x/3 konfirmasi" dan kartu "Manajemen risiko".
+1. Tab XAUUSD dan NASDAQ sama-sama menampilkan "V19 Advanced Strategy Engine · x/3 keluarga" dan kartu "Manajemen risiko".
 2. Saat ada sinyal aktif, kotak konfirmasi berstatus `MENUNGGU…`, `ENTRY SIAP`, atau `TERLAMBAT…`.
 3. `https://DOMAIN/api/cron?key=CRON_SECRET&test=1` mengirim notifikasi tes ke ntfy/Telegram.
 4. Jalankan akun demo dulu dan catat: berapa sinyal yang berakhir `TERLAMBAT`, dan apakah entry `ENTRY SIAP` benar-benar mendekati level.

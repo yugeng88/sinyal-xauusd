@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v18, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.0, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,18 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.0: Advanced Strategy Engine (mesin utama)
+
+v19 menggantikan konsensus tiga strategi v18 sebagai mesin sinyal teknikal utama untuk XAUUSD dan NASDAQ. Tujuh detector dikelompokkan menjadi tiga keluarga agar setup yang berkorelasi tidak dihitung sebagai suara terpisah:
+
+- **Reversal:** Liquidity Sweep, S/R Rejection, RSI Divergence.
+- **Continuation:** Trend Pullback, Fair Value Gap (FVG), Order Block.
+- **Breakout:** Momentum Breakout.
+
+Maksimal satu suara per keluarga; sinyal BUY/SELL memerlukan sedikitnya dua dari tiga keluarga searah. VWAP, ADX, dan ekspansi ATR menjadi filter konteks, bukan suara tambahan. Confidence 70/90 adalah skor keselarasan keluarga, bukan probabilitas menang. Hasil strategi ini dipakai oleh analisis sinyal dan pelacakan riwayat, bukan endpoint Shadow. Konfirmasi M1 wajib, proteksi entry terlambat, SL/TP dinamis, profil risiko, NEWS, notifikasi, API, serta EA MT5 v18 dipertahankan. EA hanya mengirim candle ke aplikasi; aplikasi tidak mengirim order otomatis.
+
+**Batas implementasi yang perlu diketahui:** penyelarasan multi-timeframe (MTF) lintas candle HTF belum diaktifkan pada paket ini karena alur feed MT5 saat ini memproses timeframe secara terpisah dan belum mengikat candle HTF tertutup ke sinyal timeframe aktif. Jangan menganggap filter MTF sudah berjalan. Filter VWAP memakai rolling 24 candle (proxy VWAP bila volume tidak tersedia), sehingga bukan VWAP sesi bursa resmi. Aturan ini perlu backtest dan forward-test demo; tidak ada klaim profitabilitas.
 
 ## Yang baru di v18: dua instrumen, konfirmasi M1 wajib, anti entry terlambat
 

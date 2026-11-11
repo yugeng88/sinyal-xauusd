@@ -146,12 +146,26 @@ def max_move_pct(df, minutes, bars):
     return float(vals.max()) if len(vals) else 0.0
 
 
-def strategy_arrays(df):
-    """Tiga setup kausal berbasis candle tertutup; tidak memakai candle masa depan.
+def _adx(df, n=14):
+    """ADX Wilder sederhana, dihitung kausal dari candle yang tersedia."""
+    h, l, c = df["high"].astype(float), df["low"].astype(float), df["close"].astype(float)
+    up, down = h.diff(), -l.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    atr_w = tr.ewm(alpha=1 / n, adjust=False).mean().replace(0, np.nan)
+    plus_di = 100 * plus_dm.ewm(alpha=1 / n, adjust=False).mean() / atr_w
+    minus_di = 100 * minus_dm.ewm(alpha=1 / n, adjust=False).mean() / atr_w
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    return dx.ewm(alpha=1 / n, adjust=False).mean().fillna(0)
 
-    Strategi: liquidity sweep reversal, trend-pullback, dan momentum breakout.
-    Konsensus BUY/SELL hanya muncul bila sedikitnya dua strategi searah.
-    Ini adalah aturan awal untuk diuji, bukan edge/profit yang sudah terbukti.
+
+def strategy_arrays(df):
+    """V19 Advanced Strategy Engine: 7 detector, 3 keluarga suara.
+
+    Satu keluarga maksimal satu suara agar setup yang berkorelasi tidak dihitung
+    berulang. VWAP, ADX, dan ekspansi ATR menjadi filter konteks, bukan suara.
+    Semua perhitungan hanya memakai candle saat ini dan candle sebelumnya.
     """
     c = df["close"].astype(float)
     o = df["open"].astype(float)
@@ -160,46 +174,110 @@ def strategy_arrays(df):
     a = atr(df)
     e20, e50 = ema(c, 20), ema(c, 50)
     rv = rsi(c)
-
-    prior_low = l.shift(1).rolling(12, min_periods=12).min()
-    prior_high = h.shift(1).rolling(12, min_periods=12).max()
     body = (c - o).abs()
     lower_wick = pd.concat([o, c], axis=1).min(axis=1) - l
     upper_wick = h - pd.concat([o, c], axis=1).max(axis=1)
 
-    # 1) Sweep: harga menembus swing 12 candle lalu close kembali di dalam range.
+    prior_low = l.shift(1).rolling(12, min_periods=12).min()
+    prior_high = h.shift(1).rolling(12, min_periods=12).max()
     sweep_buy = (l < prior_low) & (c > prior_low) & (c > o) & (lower_wick >= body * 0.5)
     sweep_sell = (h > prior_high) & (c < prior_high) & (c < o) & (upper_wick >= body * 0.5)
 
-    # 2) Pullback: tren EMA20/50, sentuh area EMA20 dalam toleransi 0.35 ATR,
-    # lalu candle tutup kembali searah tren dengan RSI di sisi 50.
     tol = a * 0.35
     pull_buy = (e20 > e50) & (l <= e20 + tol) & (c > e20) & (c > o) & (rv > 50)
     pull_sell = (e20 < e50) & (h >= e20 - tol) & (c < e20) & (c < o) & (rv < 50)
 
-    # 3) Breakout: close melewati high/low 20 candle sebelumnya dengan body >= 0.5 ATR.
     range_high = h.shift(1).rolling(20, min_periods=20).max()
     range_low = l.shift(1).rolling(20, min_periods=20).min()
     break_buy = (c > range_high) & (c > o) & (body >= a * 0.5)
     break_sell = (c < range_low) & (c < o) & (body >= a * 0.5)
 
-    names = ("liquidity_sweep", "trend_pullback", "momentum_breakout")
-    buy = np.column_stack([sweep_buy, pull_buy, break_buy]).astype(bool)
-    sell = np.column_stack([sweep_sell, pull_sell, break_sell]).astype(bool)
-    buy_n, sell_n = buy.sum(axis=1), sell.sum(axis=1)
-    direction = np.where(buy_n >= 2, "BUY", np.where(sell_n >= 2, "SELL", "WAIT"))
+    # S/R rejection: reject pivot-like level from the previous 30 bars.
+    sr_low = l.shift(1).rolling(30, min_periods=20).min()
+    sr_high = h.shift(1).rolling(30, min_periods=20).max()
+    sr_buy = (l <= sr_low + a * 0.15) & (c > sr_low) & (c > o) & (lower_wick >= body * 0.7)
+    sr_sell = (h >= sr_high - a * 0.15) & (c < sr_high) & (c < o) & (upper_wick >= body * 0.7)
+
+    # Fair Value Gap: three-candle imbalance, triggered by close in its zone.
+    bull_fvg = l > h.shift(2)
+    bear_fvg = h < l.shift(2)
+    fvg_buy = bull_fvg.shift(1, fill_value=False) & (l <= l.shift(1)) & (c > h.shift(2)) & (c > o)
+    fvg_sell = bear_fvg.shift(1, fill_value=False) & (h >= h.shift(1)) & (c < l.shift(2)) & (c < o)
+
+    # Order block: last opposite candle before displacement; bounded to 12 bars.
+    bull_disp = (c > o) & (body >= a * 1.0) & (c > h.shift(1))
+    bear_disp = (c < o) & (body >= a * 1.0) & (c < l.shift(1))
+    last_bear = pd.Series(np.where(c < o, np.arange(len(df)), np.nan), index=df.index).ffill()
+    last_bull = pd.Series(np.where(c > o, np.arange(len(df)), np.nan), index=df.index).ffill()
+    ix = np.arange(len(df))
+    ob_buy_idx = last_bear.where(bull_disp).ffill()
+    ob_sell_idx = last_bull.where(bear_disp).ffill()
+    ob_buy_age, ob_sell_age = ix - ob_buy_idx.fillna(-99999).to_numpy(), ix - ob_sell_idx.fillna(-99999).to_numpy()
+    bear_low, bear_high = l.where(c < o).ffill(), o.where(c < o).ffill()
+    bull_low, bull_high = o.where(c > o).ffill(), h.where(c > o).ffill()
+    ob_buy = (ob_buy_age > 0) & (ob_buy_age <= 12) & (l <= bear_high) & (c >= bear_low) & (c > o)
+    ob_sell = (ob_sell_age > 0) & (ob_sell_age <= 12) & (h >= bull_low) & (c <= bull_high) & (c < o)
+
+    # RSI divergence against recent price extreme, using prior 5-bar RSI pivot.
+    prev_rsi_low = rv.shift(1).rolling(5, min_periods=5).min()
+    prev_rsi_high = rv.shift(1).rolling(5, min_periods=5).max()
+    div_buy = (l < l.shift(1).rolling(5, min_periods=5).min()) & (rv > prev_rsi_low + 2) & (rv < 55)
+    div_sell = (h > h.shift(1).rolling(5, min_periods=5).max()) & (rv < prev_rsi_high - 2) & (rv > 45)
+
+    detectors = {
+        "liquidity_sweep": (sweep_buy, sweep_sell),
+        "trend_pullback": (pull_buy, pull_sell),
+        "momentum_breakout": (break_buy, break_sell),
+        "sr_rejection": (sr_buy, sr_sell),
+        "fair_value_gap": (fvg_buy, fvg_sell),
+        "order_block": (ob_buy, ob_sell),
+        "rsi_divergence": (div_buy, div_sell),
+    }
+    raw = {k: (np.asarray(b.fillna(False), dtype=bool), np.asarray(s.fillna(False), dtype=bool))
+           for k, (b, s) in detectors.items()}
+    # Per-family aggregation: at most one vote per family and direction.
+    families = {
+        "reversal": ("liquidity_sweep", "sr_rejection", "rsi_divergence"),
+        "continuation": ("trend_pullback", "fair_value_gap", "order_block"),
+        "breakout": ("momentum_breakout",),
+    }
+    fam_buy, fam_sell = {}, {}
+    for fam, members in families.items():
+        fam_buy[fam] = np.logical_or.reduce([raw[k][0] for k in members])
+        fam_sell[fam] = np.logical_or.reduce([raw[k][1] for k in members])
+
+    # Rolling VWAP proxy (24 bars); if volume is absent/zero use rolling typical price.
+    typical = (h + l + c) / 3
+    vol = pd.to_numeric(df.get("volume", pd.Series(0, index=df.index)), errors="coerce").fillna(0).clip(lower=0)
+    vol_sum = vol.rolling(24, min_periods=1).sum()
+    vwap = ((typical * vol).rolling(24, min_periods=1).sum() / vol_sum.replace(0, np.nan)).fillna(
+        typical.rolling(24, min_periods=1).mean())
+    adx_v = _adx(df)
+    atr_base = a.rolling(20, min_periods=10).median()
+    vol_expansion = a >= atr_base * 0.70
+    vwap_up, vwap_dn = c >= vwap, c <= vwap
+    context_ok = (adx_v >= 10) & vol_expansion
+
+    buy_n = np.sum(np.column_stack(list(fam_buy.values())), axis=1)
+    sell_n = np.sum(np.column_stack(list(fam_sell.values())), axis=1)
+    raw_buy = (buy_n >= 2) & vwap_up.to_numpy() & context_ok.to_numpy()
+    raw_sell = (sell_n >= 2) & vwap_dn.to_numpy() & context_ok.to_numpy()
+    direction = np.where(raw_buy & ~raw_sell, "BUY", np.where(raw_sell & ~raw_buy, "SELL", "WAIT"))
     count = np.where(direction == "BUY", buy_n, np.where(direction == "SELL", sell_n, 0))
-    # Jarak close ke ekstrem struktur 8 candle (termasuk candle ini): dasar SL dinamis.
     swing_lo, swing_hi = l.rolling(8, min_periods=1).min(), h.rolling(8, min_periods=1).max()
     stop_dist = np.where(direction == "BUY", (c - swing_lo).to_numpy(),
                          np.where(direction == "SELL", (swing_hi - c).to_numpy(), np.nan)).astype(float)
+    detector_status = {name: np.where(b, "BUY", np.where(s, "SELL", "WAIT"))
+                       for name, (b, s) in raw.items()}
+    family_status = {name: np.where(fam_buy[name], "BUY", np.where(fam_sell[name], "SELL", "WAIT"))
+                     for name in families}
     return {
-        "direction": direction,
-        "stop_dist": stop_dist,
+        "direction": direction, "stop_dist": stop_dist,
         "confidence": np.where(count == 3, 90, np.where(count == 2, 70, 0)).astype(int),
-        "votes": count.astype(int),
-        "strategies": {name: np.where(buy[:, i], "BUY", np.where(sell[:, i], "SELL", "WAIT"))
-                       for i, name in enumerate(names)},
+        "votes": count.astype(int), "strategies": detector_status,
+        "families": family_status,
+        "context": {"vwap": vwap.to_numpy(), "adx": adx_v.to_numpy(),
+                    "volatility_expansion": vol_expansion.to_numpy()},
     }
 
 
@@ -266,19 +344,25 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         conf = int(strat["confidence"][-1])
         votes = int(strat["votes"][-1])
         strategy_labels = {
-            "liquidity_sweep": "Liquidity Sweep Reversal",
-            "trend_pullback": "Trend Pullback",
-            "momentum_breakout": "Momentum Breakout",
+            "liquidity_sweep": "Liquidity Sweep Reversal", "trend_pullback": "Trend Pullback",
+            "momentum_breakout": "Momentum Breakout", "sr_rejection": "S/R Rejection",
+            "fair_value_gap": "Fair Value Gap", "order_block": "Order Block",
+            "rsi_divergence": "RSI Divergence",
         }
         strategy_status = {strategy_labels[k]: str(v[-1]) for k, v in strat["strategies"].items()}
-        strategy_engine = {"name": "3-Strategy Consensus", "minimum_votes": 2,
-                           "votes": votes, "strategies": strategy_status,
+        family_status = {k.title(): str(v[-1]) for k, v in strat["families"].items()}
+        ctx = strat["context"]
+        strategy_engine = {"name": "V19 Advanced Strategy Engine", "minimum_votes": 2,
+                           "votes": votes, "families": family_status, "strategies": strategy_status,
+                           "context": {"vwap": round(float(ctx["vwap"][-1]), 2),
+                                       "adx": round(float(ctx["adx"][-1]), 1),
+                                       "volatility_expansion": bool(ctx["volatility_expansion"][-1])},
                            "status": "CONFIRMED" if direction != "WAIT" else "WAIT"}
         if direction == "WAIT":
-            reasons.append("Konfirmasi strategi belum mencapai minimal 2 dari 3 strategi yang searah.")
+            reasons.append("Konfirmasi belum mencapai minimal 2 dari 3 keluarga strategi, atau filter konteks VWAP/volatilitas belum mendukung.")
         else:
             agreeing = [name for name, side in strategy_status.items() if side == direction]
-            reasons.append(f"Konsensus {votes}/3 strategi untuk {direction}: " + ", ".join(agreeing) + ".")
+            reasons.append(f"Konsensus {votes}/3 keluarga strategi untuk {direction}: " + ", ".join(agreeing) + ".")
         reasons.append(f"Arah indikator lama: {legacy_direction} (dipertahankan sebagai informasi pembanding).")
     else:
         direction = legacy_direction
