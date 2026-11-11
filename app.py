@@ -22,7 +22,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.0"
+VERSION = "19.1"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -436,7 +436,9 @@ def news_view(ev_id=None, now=None, manual=None):
     out_focus = {**focus, "study": summ, "progress": prog, "live_price": live, "ctx_h1": ctx,
                  "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})",
                  "inputs": inputs, "surprise": sur}
-    if focus["status"] == "PRA":
+    if focus["status"] == "PRA" and -focus["minutes"] / 60.0 > news.pre_signal_hours():
+        out_focus["signal"] = news.far_signal(focus["minutes"])           # masih jauh: tanpa arah
+    elif focus["status"] == "PRA":
         pre = m5[(m5["time"] >= t0 - pd.Timedelta(minutes=60)) & (m5["time"] < t0)] if m5 is not None else None
         hi = None if pre is None or len(pre) < 6 else float(pre["high"].max())
         lo = None if pre is None or len(pre) < 6 else float(pre["low"].min())

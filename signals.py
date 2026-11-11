@@ -25,7 +25,7 @@ CONSENSUS_SYMBOLS = ("XAUUSD", "NASDAQ")            # instrumen yang memakai mes
 _PROFILE_DEFAULTS = {
     "XAUUSD": dict(atr_mult=1.5, sl_min=1.0, sl_max=2.5, sl_buffer=0.1, rr="2,3,4",
                    zone_r=0.5, max_age_bars=2, risk_pct=1.0, point_value=100.0),
-    "NASDAQ": dict(atr_mult=1.8, sl_min=1.2, sl_max=3.0, sl_buffer=0.1, rr="2,3,4",
+    "NASDAQ": dict(atr_mult=1.8, sl_min=1.2, sl_max=3.0, sl_buffer=0.1, rr="1,1.5,2",
                    zone_r=0.4, max_age_bars=2, risk_pct=0.5, point_value=1.0),
 }
 

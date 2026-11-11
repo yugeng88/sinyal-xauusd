@@ -257,6 +257,31 @@ SURPRISE_CFG = {
 W_TREND, W_HIST, W_FCST = 0.40, 0.35, 0.25     # bobot sinyal SEBELUM rilis
 W_PRICE, W_SURP, W_CONT = 0.50, 0.40, 0.10     # bobot sinyal SESUDAH rilis
 FLOOR_PRE, FLOOR_POST = 0.05, 0.12             # skor minimum agar arah dikeluarkan
+PRE_SIGNAL_HOURS = 24.0                        # sinyal arah sebelum rilis baru terbit sejak sekian jam sebelum rilis
+
+
+def pre_signal_hours():
+    """Ambang jam (env NEWS_PRE_SIGNAL_HOURS, bawaan 24). Nilai tidak valid -> bawaan."""
+    try:
+        v = float(os.getenv("NEWS_PRE_SIGNAL_HOURS", "") or PRE_SIGNAL_HOURS)
+    except ValueError:
+        return PRE_SIGNAL_HOURS
+    return v if v > 0 else PRE_SIGNAL_HOURS
+
+
+def far_signal(minutes_before, limit_hours=None):
+    """Berita masih jauh: jangan beri arah. Skor sebelum rilis yang jauh hanya mengulang tren H1 saat ini
+    (sama untuk semua berita) dan tidak ada Forecast, jadi menyesatkan."""
+    lim = limit_hours if limit_hours is not None else pre_signal_hours()
+    hrs = abs(minutes_before) / 60.0
+    jauh = f"{round(hrs / 24)} hari" if hrs >= 48 else f"{round(hrs)} jam"
+    batas = f"{lim:g} jam"
+    return {"kind": "PRA", "direction": "WAIT", "strength": None, "confidence": 0, "score": None,
+            "levels": None, "straddle": None, "factors": [], "too_far": True,
+            "reasons": [f"Rilis masih sekitar {jauh} lagi. Sinyal arah baru diterbitkan {batas} sebelum rilis.",
+                        "Alasannya: untuk berita yang jauh, skor hanya mengulang tren H1 emas saat ini (sama untuk semua berita) "
+                        "dan Forecast belum tersedia. Tren itu bisa berubah total sebelum hari rilis.",
+                        "Riwayat reaksi di bawah tetap bisa dipakai sebagai bahan persiapan."]}
 
 _NUM = re.compile(r"^\s*[<>\u2264\u2265~]?\s*(-?\d+(?:\.\d+)?)\s*([KMBT%]?)\s*$", re.I)
 _MULT = {"": 1.0, "%": 1.0, "K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}

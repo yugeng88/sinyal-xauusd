@@ -41,3 +41,7 @@ curl http://127.0.0.1:8000/healthz
 4. Jalankan akun demo dulu dan catat: berapa sinyal yang berakhir `TERLAMBAT`, dan apakah entry `ENTRY SIAP` benar-benar mendekati level.
 
 Bukan saran investasi. Belum ada backtest tick data, spread, komisi, dan slippage.
+
+## RR NAS100 (v19.1 update)
+Default RR NASDAQ is now TP1=1.0R, TP2=1.5R, TP3=2.0R. XAUUSD defaults remain 2R/3R/4R.
+If Vercel already has `RR_NASDAQ` configured, change it to `1,1.5,2` (or remove it to use the code default), then redeploy. A configured environment variable takes precedence over the ZIP defaults.

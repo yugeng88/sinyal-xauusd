@@ -111,6 +111,7 @@ jadi Actual diketik manual tepat setelah rilis di kartu "Angka berita". Bila fee
 2. Variabel lingkungan yang sudah ada tetap dipakai. Yang baru dan **opsional**:
    - `NEWS_FEED=off` untuk mematikan pembacaan kalender Forex Factory (angka diisi manual saja).
    - `NEWS_FEED_URL` untuk mengganti alamat feed.
+   - `NEWS_PRE_SIGNAL_HOURS` (bawaan 24): sinyal arah sebelum news baru terbit sejak sekian jam sebelum rilis; lebih jauh dari itu kartu hanya menampilkan TUNGGU dan riwayat reaksi.
    - Lainnya seperti sebelumnya: `TWELVEDATA_API_KEY`, `CRON_SECRET`, `NTFY_TOPIC`, `NEWS_CALLS_PER_MIN`, `NEWS_PRE_MIN`, `EXTRA_EVENTS`, dst.
 3. Tunggu status **Ready**. Di bawah dasbor tertulis "Versi 18". Cek juga `/healthz` (harus memuat `"version": "18"`).
 

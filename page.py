@@ -173,7 +173,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.0 · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.1 · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
