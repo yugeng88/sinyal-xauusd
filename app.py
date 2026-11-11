@@ -18,11 +18,12 @@ from flask import Flask, Response, jsonify, request
 
 import data
 import news
+import news_intelligence
 import notify
 import page
 import signals
 
-VERSION = "19.1"
+VERSION = "19.2"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -415,8 +416,11 @@ def news_view(ev_id=None, now=None, manual=None):
     focus = next((e for e in evs if e["id"] == ev_id), None) or news.pick_focus(evs)
     ensure_fresh("XAUUSD", "M5")
     ensure_fresh("XAUUSD", "H1")
+    # Data NASDAQ hanya dibaca oleh tab NEWS; mesin sinyal teknikal tidak diubah.
+    ensure_fresh("NASDAQ", "H1")
     m5 = raw.get(("XAUUSD", "M5"))
     h1 = states[("XAUUSD", "H1")]["signal"]
+    nasdaq_h1 = states[("NASDAQ", "H1")]["signal"]
     typ = focus["type"]
     dates = news.past_dates(typ, ts.to_pydatetime())
     fam = news.TYPES[typ]["family"]
@@ -433,9 +437,13 @@ def news_view(ev_id=None, now=None, manual=None):
     # Angka berita: Forecast/Previous dari kalender Forex Factory (bila terbaca), lalu ditimpa input manual.
     inputs = news_inputs(focus, manual)
     sur = news.surprise(typ, inputs["forecast"], inputs["previous"], inputs["actual"])
+    ntrend = nasdaq_h1["direction"] if nasdaq_h1 and not nasdaq_h1.get("market_closed") else None
+    xtrend = h1["direction"] if usable_h1 else None
+    market_impact = news_intelligence.market_impact(typ, sur, {"NASDAQ": ntrend, "XAUUSD": xtrend})
     out_focus = {**focus, "study": summ, "progress": prog, "live_price": live, "ctx_h1": ctx,
                  "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})",
-                 "inputs": inputs, "surprise": sur}
+                 "inputs": inputs, "surprise": sur, "market_impact": market_impact,
+                 "nasdaq_h1_label": None if not nasdaq_h1 else f"{nasdaq_h1['direction']} (skor {nasdaq_h1['score']:+d})"}
     if focus["status"] == "PRA" and -focus["minutes"] / 60.0 > news.pre_signal_hours():
         out_focus["signal"] = news.far_signal(focus["minutes"])           # masih jauh: tanpa arah
     elif focus["status"] == "PRA":

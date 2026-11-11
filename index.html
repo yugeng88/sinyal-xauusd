@@ -172,7 +172,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.1 · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.2 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -532,6 +532,9 @@ function renderNews(j){
   }
   const prog = (pr.total && pr.done < pr.total) ? `<p class="note">Mengambil riwayat harga: ${pr.done} dari ${pr.total}${pr.wait_seconds?` (menunggu kuota per menit ±${pr.wait_seconds} detik)`:""}…${pr.error?`<br><span style="color:var(--sell)">${esc(pr.error)}</span>`:""}</p>
       <div class="bar"><div style="width:${Math.round(pr.done/pr.total*100)}%"></div></div>` : "";
+  const mi = f.market_impact || {};
+  const miItem = x => `<div class="mini"><div><small>Bias makro</small><b class="${x.macro_bias||"WAIT"}">${esc(x.macro_bias||"WAIT")}</b></div><div><small>Tren H1</small><b>${esc(x.trend_h1||"UNKNOWN")}</b></div><div><small>Hasil NEWS</small><b class="${x.direction||"WAIT"}">${esc(x.direction||"WAIT")}</b></div><div><small>Kejutan</small><b>${esc(x.strength||"–")}</b></div></div><p class="note">${esc(x.reason||"")}</p>`;
+  const impactCard = mi.nasdaq && mi.xauusd ? `<section class="card"><h2>Dampak NEWS lintas instrumen</h2><p class="note">Mesin aturan transparan · bukan prediksi AI</p><h3 style="margin-top:12px">NASDAQ</h3>${miItem(mi.nasdaq)}<h3 style="margin-top:14px">XAUUSD</h3>${miItem(mi.xauusd)}<p class="note" style="margin-top:8px">${esc(mi.disclaimer||"")}</p></section>` : "";
   const inp = f.inputs || {}, sur = f.surprise;
   const man = NW(f.id);
   const nv = k => esc(man[k] != null && man[k] !== "" ? man[k] : (inp[k] || ""));
@@ -554,10 +557,11 @@ function renderNews(j){
       ${fomc}
     </section>
     ${numcard}
+    ${impactCard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
     <section class="card">${HOW}</section>
     <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI, PPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
-      Sinyal berita adalah skor dari tren H1, riwayat reaksi, angka berita, dan reaksi harga. Itu kecenderungan, bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
+      Sinyal XAUUSD lama tetap dihitung dari tren H1, riwayat reaksi, angka berita, dan reaksi harga. Panel lintas instrumen adalah konteks tambahan NEWS. Itu kecenderungan, bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
   v.querySelectorAll(".ev").forEach(b=>b.addEventListener("click",()=>{ newsId = b.dataset.id; loadNews(); }));
   const nb = $("nbtn");
   if(nb) nb.addEventListener("click",()=>{

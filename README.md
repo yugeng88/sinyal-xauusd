@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.0, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.2 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -88,12 +88,26 @@ Uji mesin strategi: `python -m unittest tests.test_strategies -v`.
 (`https://nfs.faireconomy.media/ff_calendar_thisweek.json`, hanya memuat pekan berjalan). Feed gratis ini **tidak memuat Actual**,
 jadi Actual diketik manual tepat setelah rilis di kartu "Angka berita". Bila feed gagal terbaca, isi semuanya manual. Aplikasi tetap jalan.
 
+## Yang baru di v19.2 NEWS: dampak berita lintas instrumen (NEWS-only)
+
+Pembaruan ini hanya menambah konteks analisis pada tab NEWS. Mesin sinyal teknikal di `signals.py`, profil risiko, konfirmasi M1, notifikasi sinyal teknikal, dan alur EA MT5 tidak diubah.
+
+- Modul baru `news_intelligence.py` menggabungkan kejutan Actual (bila tersedia) dengan tren H1 NASDAQ dan XAUUSD.
+- Panel NEWS menampilkan bias makro, tren H1, dan hasil konfirmasi untuk kedua instrumen.
+- Untuk CPI/PPI/PCE/FOMC, bias makro hanya ditampilkan sebagai kecenderungan; BUY/SELL lintas instrumen hanya muncul jika Actual tersedia dan tren H1 searah. Selain itu hasilnya WAIT.
+- NFP untuk NASDAQ ditandai MIXED/WAIT karena dampaknya dapat mendukung pertumbuhan tetapi juga menaikkan yield.
+- Panel ini adalah mesin aturan transparan, bukan AI/LLM dan bukan probabilitas menang. Tidak ada order MT5 yang dikirim.
+- Sinyal NEWS XAUUSD yang lama dipertahankan. Studi reaksi historis yang lama tetap XAUUSD; pembaruan ini belum mengklaim historical backtest NASDAQ atau sentiment artikel berita.
+
+Uji logika tambahan: `python -m unittest discover -s tests -p 'test_news_intelligence.py' -v`.
+
 ## Struktur file
 
 | File | Fungsi |
 |---|---|
 | `app.py` | server Flask, rute API, cron notifikasi |
-| `news.py` | jadwal berita, studi reaksi harga, pembaca angka berita, sinyal news |
+| `news.py` | jadwal berita, studi reaksi harga XAUUSD, pembaca angka berita, sinyal news lama |
+| `news_intelligence.py` | analisis bias makro NEWS untuk NASDAQ dan XAUUSD |
 | `signals.py` | sinyal teknikal, profil risiko per instrumen, SL/TP dinamis, konfirmasi M1 + anti entry terlambat |
 | `data.py` | pengambilan harga (MT5/OANDA/Twelve Data/Yahoo) |
 | `notify.py` | notifikasi ntfy/Telegram |
