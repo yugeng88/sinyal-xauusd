@@ -54,6 +54,10 @@ h2{font-size:15px;margin-bottom:8px}
 .hist{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
 .hist td,.hist th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
 .hist th{color:var(--mute);font-weight:500}
+.stick{position:sticky;top:0;z-index:20;display:grid;gap:14px;
+  margin:calc(-1 * max(16px,env(safe-area-inset-top))) -16px -6px;
+  padding:max(16px,env(safe-area-inset-top)) 16px 6px;
+  background:rgba(11,14,26,.94);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
 .tabs{display:flex;gap:8px}
 .tab{flex:1;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:11px 8px;font:600 14px var(--font);cursor:pointer}
 .tab[aria-selected="true"]{color:var(--text);border-color:var(--accent);background:#1a1d33}
@@ -113,6 +117,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 </head>
 <body>
 <main>
+  <div class="stick">
   <div class="tabs" role="tablist" aria-label="Pilih instrumen">
     <button class="tab" role="tab" id="tab-XAUUSD" data-sym="XAUUSD">XAUUSD</button>
     <button class="tab" role="tab" id="tab-NASDAQ" data-sym="NASDAQ">NASDAQ</button>
@@ -123,6 +128,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <button class="tf" role="tab" data-tf="M15">M15</button>
     <button class="tf" role="tab" data-tf="M30">M30</button>
     <button class="tf" role="tab" data-tf="H1">H1</button>
+  </div>
   </div>
   <div id="err" class="card error" hidden></div>
   <section id="newsview"></section>
