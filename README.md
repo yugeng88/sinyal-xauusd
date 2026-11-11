@@ -1,7 +1,7 @@
 # Sinyal XAUUSD & NASDAQ (v18, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
-radar berita ekonomi AS (CPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
+radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
 Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUAN_MT5.txt`).
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
@@ -70,7 +70,7 @@ Uji mesin strategi: `python -m unittest tests.test_strategies -v`.
 - Actual di atas Forecast (inflasi, pekerjaan, atau suku bunga lebih tinggi) → dolar menguat → emas cenderung turun → **SELL**.
 - Actual di bawah Forecast → dolar melemah → emas cenderung naik → **BUY**.
 - Sama persis → ikuti reaksi harga. Bila angka dan harga bertentangan, **harga diutamakan**.
-- Besar kejutan memakai satuan praktis di `news.py` (`SURPRISE_CFG`): CPI/PCE 0,1 poin persen, NFP 50 ribu, suku bunga 0,25. Ubah sesuai pengalamanmu.
+- Besar kejutan memakai satuan praktis di `news.py` (`SURPRISE_CFG`): CPI/PPI/PCE 0,1 poin persen, NFP 50 ribu, suku bunga 0,25. Ubah sesuai pengalamanmu.
 
 **Sumber angka:** Forecast dan Previous dibaca otomatis dari feed kalender Forex Factory
 (`https://nfs.faireconomy.media/ff_calendar_thisweek.json`, hanya memuat pekan berjalan). Feed gratis ini **tidak memuat Actual**,

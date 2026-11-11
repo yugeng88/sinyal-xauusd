@@ -31,6 +31,7 @@ TYPES = {
     "FOMC_PC": {"label": "FOMC: konferensi pers",      "short": "FOMC Pers",  "et": (14, 30), "family": "FOMC"},
     "NFP":     {"label": "Non-Farm Payrolls (NFP)",    "short": "NFP",        "et": (8, 30),  "family": "NFP"},
     "CPI":     {"label": "CPI (inflasi)",              "short": "CPI",        "et": (8, 30),  "family": "CPI"},
+    "PPI":     {"label": "PPI (harga produsen)",       "short": "PPI",        "et": (8, 30),  "family": "PPI"},
     "PCE":     {"label": "PCE (Personal Income & Outlays)", "short": "PCE",   "et": (8, 30),  "family": "PCE"},
 }
 
@@ -43,6 +44,9 @@ SCHEDULE = {
              "2026-10-02", "2026-11-06", "2026-12-04"],
     "CPI":  ["2026-05-12", "2026-06-10", "2026-07-14", "2026-08-12", "2026-09-11",
              "2026-10-14", "2026-11-10", "2026-12-10"],
+    # PPI: jadwal resmi BLS (termasuk jadwal revisi setelah penutupan pemerintah di awal 2026)
+    "PPI":  ["2026-02-27", "2026-03-18", "2026-04-14", "2026-05-13", "2026-06-11", "2026-07-15",
+             "2026-08-13", "2026-09-10", "2026-10-15", "2026-11-13", "2026-12-15"],
     "PCE":  ["2026-07-30", "2026-08-26", "2026-09-30", "2026-10-29", "2026-11-25", "2026-12-23"],
 }
 ESTIMATED = {("PCE", "2026-11-25"), ("PCE", "2026-12-23")}
@@ -78,7 +82,7 @@ def parse_extra(raw):
 
 
 def parse_bls_ics(text):
-    """Ambil tanggal NFP dan CPI dari kalender BLS (iCal). Hasil: [(type, 'YYYY-MM-DD')]."""
+    """Ambil tanggal NFP, CPI, dan PPI dari kalender BLS (iCal). Hasil: [(type, 'YYYY-MM-DD')]."""
     out = []
     for blk in text.split("BEGIN:VEVENT")[1:]:
         s = re.search(r"SUMMARY[^:]*:(.+)", blk)
@@ -87,7 +91,8 @@ def parse_bls_ics(text):
             continue
         summ = s.group(1).strip()
         typ = ("NFP" if summ.startswith("Employment Situation") else
-               "CPI" if summ.startswith("Consumer Price Index") else None)
+               "CPI" if summ.startswith("Consumer Price Index") else
+               "PPI" if summ.startswith("Producer Price Index") else None)
         if typ:
             x = d.group(1)
             out.append((typ, f"{x[:4]}-{x[4:6]}-{x[6:]}"))
@@ -244,6 +249,7 @@ def summarize(rows):
 # "unit" = ukuran satu kejutan yang dianggap bermakna (aturan praktis, boleh diubah di sini).
 SURPRISE_CFG = {
     "CPI":  {"metric": "Core CPI m/m", "feed": ["Core CPI m/m", "CPI m/m"], "unit": 0.1},
+    "PPI":  {"metric": "Core PPI m/m", "feed": ["Core PPI m/m", "PPI m/m"], "unit": 0.1},
     "PCE":  {"metric": "Core PCE Price Index m/m", "feed": ["Core PCE Price Index m/m", "PCE Price Index m/m"], "unit": 0.1},
     "NFP":  {"metric": "Non-Farm Employment Change", "feed": ["Non-Farm Employment Change"], "unit": 50000.0},
     "FOMC": {"metric": "Federal Funds Rate", "feed": ["Federal Funds Rate"], "unit": 0.25},

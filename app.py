@@ -22,7 +22,7 @@ import notify
 import page
 import signals
 
-VERSION = "18.1"
+VERSION = "18.2"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"

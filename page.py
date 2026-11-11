@@ -173,7 +173,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 18.1 · dual-instrument: 3-strategy consensus XAUUSD & NASDAQ + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 18.2 · dual-instrument: 3-strategy consensus XAUUSD & NASDAQ + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -499,7 +499,7 @@ const HOW = `<details class="how"><summary>Cara membaca angka berita (seperti di
   <li>Buka kalender Forex Factory, cari berita <b>USD</b> berfolder merah (dampak tinggi). Ada tiga angka: <b>Previous</b> (sebelumnya), <b>Forecast</b> (perkiraan pasar), <b>Actual</b> (hasil rilis).</li>
   <li>Yang menggerakkan harga adalah <b>kejutan</b>: Actual dibanding <b>Forecast</b>, bukan dibanding Previous. Forecast sudah masuk harga sebelum rilis.</li>
   <li>Aturan emas (XAUUSD): Actual <b>di atas</b> Forecast (inflasi, pekerjaan, atau suku bunga lebih tinggi) → dolar menguat → emas cenderung <b>turun (SELL)</b>. Actual <b>di bawah</b> Forecast → dolar melemah → emas cenderung <b>naik (BUY)</b>. Sama persis → ikuti reaksi harga.</li>
-  <li>Besar kejutan: CPI/PCE dihitung per 0,1 poin persen, NFP per 50 ribu pekerjaan, suku bunga per 0,25. Ini aturan praktis, bisa diubah di news.py.</li>
+  <li>Besar kejutan: CPI/PPI/PCE dihitung per 0,1 poin persen, NFP per 50 ribu pekerjaan, suku bunga per 0,25. Ini aturan praktis, bisa diubah di news.py.</li>
   <li>Lima menit pertama setelah rilis spread lebar dan harga acak: jangan entry dulu. Setelah itu, <b>harga adalah hakim terakhir</b>: bila angka bilang SELL tetapi harga naik kuat, ikuti harga.</li>
   <li>Contoh dari video referensi: Core CPI 0,3% (Forecast 0,2%) membuat emas turun sekitar 600 pip. Itu satu contoh, bukan jaminan.</li>
   <li>Sebelum rilis, Forecast dan Previous terisi otomatis dari Forex Factory bila terbaca. <b>Actual</b> ketik sendiri tepat setelah rilis (feed gratis tidak memuatnya), lalu tekan Hitung.</li></ol></details>`;
@@ -557,7 +557,7 @@ function renderNews(j){
     ${numcard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
     <section class="card">${HOW}</section>
-    <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
+    <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI, PPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
       Sinyal berita adalah skor dari tren H1, riwayat reaksi, angka berita, dan reaksi harga. Itu kecenderungan, bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
   v.querySelectorAll(".ev").forEach(b=>b.addEventListener("click",()=>{ newsId = b.dataset.id; loadNews(); }));
   const nb = $("nbtn");
