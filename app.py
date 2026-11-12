@@ -752,6 +752,46 @@ def _jsonable(x):
     return json.loads(json.dumps(x, default=str))
 
 
+_mt5_candles = {}      # (instrumen, tf) -> {"t": waktu kirim, "rows": [[epoch,o,h,l,c],...]}
+
+
+def _store_candles(sym, tf, df):
+    """Simpan candle broker mentah supaya bisa dibaca aplikasi RSI (GET /api/candles)."""
+    d = df.tail(300)
+    rows = [[int(t.timestamp()), float(o), float(h), float(l), float(c)]
+            for t, o, h, l, c in zip(d["time"], d["open"], d["high"], d["low"], d["close"])]
+    rec = {"t": time.time(), "broker": str(df.attrs.get("broker", "")), "rows": rows}
+    _mt5_candles[(sym, tf)] = rec
+    notify.kv_set(f"mt5c:{sym}:{tf}", json.dumps(rec), ttl=6 * 3600)
+
+
+def _cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = os.getenv("CANDLES_ORIGIN", "https://yugeng88.github.io").strip() or "*"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/candles")
+def api_candles():
+    """Candle broker dari EA MT5 (hanya baca harga) untuk aplikasi RSI di GitHub Pages."""
+    sym, tf = pick()
+    if sym is None:
+        return _cors(jsonify(error="Instrumen atau timeframe tidak dikenal")), 404
+    rec = _mt5_candles.get((sym, tf))
+    if not rec:
+        raw_v = notify.kv_get(f"mt5c:{sym}:{tf}")
+        if raw_v:
+            try:
+                rec = json.loads(raw_v)
+                _mt5_candles[(sym, tf)] = rec
+            except ValueError:
+                rec = None
+    if not rec:
+        return _cors(jsonify(error="Belum ada data MT5 untuk %s %s. Pastikan EA SinyalMT5 berjalan." % (sym, tf))), 404
+    age = time.time() - float(rec["t"])
+    return _cors(jsonify(symbol=sym, tf=tf, broker=rec.get("broker"), age=round(age), stale=age > 900, rows=rec["rows"]))
+
+
 @app.post("/api/mt5")
 def api_mt5():
     """Diterima dari EA di MT5 (PC atau VPS). Sinyal dan notifikasi dihitung dari harga broker."""
@@ -806,6 +846,11 @@ def mt5_ingest(j):
                 states[(sym, tf)].update(signal=sig, summary=rec["summary"], error=None,
                                          updated_at=rec["updated_at"], last_attempt=rec["updated_at"])
             raw[(sym, tf)] = df.tail(400)
+            try:                                   # tambahan: simpan candle broker untuk aplikasi RSI (aman bila gagal)
+                df.attrs["broker"] = broker
+                _store_candles(sym, tf, df)
+            except Exception:  # noqa: BLE001
+                pass
             _mt5["sig"][(sym, tf)] = {**rec, "_read": time.time()}
             notify.kv_set(f"mt5sig:{sym}:{tf}", json.dumps(rec), ttl=6 * 3600)
             fresh[(sym, tf)] = rec
