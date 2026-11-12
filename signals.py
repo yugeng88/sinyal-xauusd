@@ -78,7 +78,7 @@ def ema(s, n):
     return s.ewm(span=n, adjust=False).mean()
 
 
-def rsi(close, n=14):
+def rsi(close, n=8):
     d = close.diff()
     up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
     dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
@@ -218,11 +218,11 @@ def strategy_arrays(df):
     ob_buy = (ob_buy_age > 0) & (ob_buy_age <= 12) & (l <= bear_high) & (c >= bear_low) & (c > o)
     ob_sell = (ob_sell_age > 0) & (ob_sell_age <= 12) & (h >= bull_low) & (c <= bull_high) & (c < o)
 
-    # RSI divergence against recent price extreme, using prior 5-bar RSI pivot.
-    prev_rsi_low = rv.shift(1).rolling(5, min_periods=5).min()
-    prev_rsi_high = rv.shift(1).rolling(5, min_periods=5).max()
-    div_buy = (l < l.shift(1).rolling(5, min_periods=5).min()) & (rv > prev_rsi_low + 2) & (rv < 55)
-    div_sell = (h > h.shift(1).rolling(5, min_periods=5).max()) & (rv < prev_rsi_high - 2) & (rv > 45)
+    # RSI 8 Close: BUY saat RSI menembus turun ke area <=30,
+    # SELL saat RSI menembus naik ke area >=70. Hanya candle tertutup
+    # yang dipakai oleh pipeline analisis utama.
+    rsi8_buy = (rv.shift(1) > 30) & (rv <= 30)
+    rsi8_sell = (rv.shift(1) < 70) & (rv >= 70)
 
     detectors = {
         "liquidity_sweep": (sweep_buy, sweep_sell),
@@ -231,13 +231,13 @@ def strategy_arrays(df):
         "sr_rejection": (sr_buy, sr_sell),
         "fair_value_gap": (fvg_buy, fvg_sell),
         "order_block": (ob_buy, ob_sell),
-        "rsi_divergence": (div_buy, div_sell),
+        "rsi_8": (rsi8_buy, rsi8_sell),
     }
     raw = {k: (np.asarray(b.fillna(False), dtype=bool), np.asarray(s.fillna(False), dtype=bool))
            for k, (b, s) in detectors.items()}
     # Per-family aggregation: at most one vote per family and direction.
     families = {
-        "reversal": ("liquidity_sweep", "sr_rejection", "rsi_divergence"),
+        "reversal": ("liquidity_sweep", "sr_rejection", "rsi_8"),
         "continuation": ("trend_pullback", "fair_value_gap", "order_block"),
         "breakout": ("momentum_breakout",),
     }
@@ -347,7 +347,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
             "liquidity_sweep": "Liquidity Sweep Reversal", "trend_pullback": "Trend Pullback",
             "momentum_breakout": "Momentum Breakout", "sr_rejection": "S/R Rejection",
             "fair_value_gap": "Fair Value Gap", "order_block": "Order Block",
-            "rsi_divergence": "RSI Divergence",
+            "rsi_8": "RSI 8 Close",
         }
         strategy_status = {strategy_labels[k]: str(v[-1]) for k, v in strat["strategies"].items()}
         family_status = {k.title(): str(v[-1]) for k, v in strat["families"].items()}
@@ -411,9 +411,11 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         "live_price": round(live_price, 2),
         "indicators": {
             "ema20": round(v20, 2), "ema50": round(v50, 2), "ema100": round(v100, 2),
-            "rsi14": round(rsi_v, 1), "atr14": round(atr_v, 2),
+            "rsi8": round(rsi_v, 1), "rsi_period": 8, "rsi_source": "Close", "atr14": round(atr_v, 2),
             "change_24h_pct": None if chg is None else round(chg, 2),
         },
+        "rsi_settings": {"period": 8, "source": "Close",
+                         "levels": [15, 20, 30, 50, 70, 80, 85]},
         "levels": levels,
         "reasons": reasons,
         "warnings": warnings,
