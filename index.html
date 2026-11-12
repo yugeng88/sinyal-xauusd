@@ -172,7 +172,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.3 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.4 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -265,7 +265,7 @@ function render(s){
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;
   $("ind").innerHTML = [["EMA 20",fp(i.ema20)],["EMA 50",fp(i.ema50)],["EMA 100",fp(i.ema100)],
-    ["RSI 8 (Close)",fmt(i.rsi8,1)],["ATR 14",fmt(i.atr14)],["24 jam",i.change_24h_pct==null?"–":(i.change_24h_pct>0?"+":"")+fmt(i.change_24h_pct)+"%"]]
+    ["RSI 14",fmt(i.rsi14,1)],["ATR 14",fmt(i.atr14)],["24 jam",i.change_24h_pct==null?"–":(i.change_24h_pct>0?"+":"")+fmt(i.change_24h_pct)+"%"]]
     .map(([a,b])=>`<div>${a}<b>${b}</b></div>`).join("");
   $("indcard").hidden = false;
   $("src").textContent = "Sumber: " + sig.source;

@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.3 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.4 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,11 +7,18 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
+## Yang baru di v19.4: kembali ke RSI 14 + Divergence, perapian kecil
+
+- Mesin sinyal sama dengan v19.2: detector **RSI Divergence** (RSI periode 14) di keluarga Reversal. Percobaan v19.3 (RSI 8 Close) tidak dipakai: dalam uji sintetis detector itu tidak pernah ikut menghasilkan sinyal akhir karena bertabrakan dengan filter VWAP, dan perubahan periode RSI global ikut mengubah Trend Pullback, peringatan 75/25, dan konfirmasi M1.
+- Dokumentasi: RR default NASDAQ di tabel v18 disamakan dengan kode dan `.env.example` (1 / 1,5 / 2).
+- Tes baru (`tests/test_v194.py`): periode RSI bawaan 14, detector divergence menyala pada kasus buatan dan tidak melihat masa depan, serta RR NASDAQ konsisten dengan `.env.example`.
+- Catatan jujur: perbandingan v19.2 vs v19.3 memakai data sintetis, bukan data pasar nyata, sehingga tidak membuktikan profitabilitas. Lakukan backtest data MT5 asli dan forward-test di akun demo.
+
 ## Yang baru di v19.0: Advanced Strategy Engine (mesin utama)
 
 v19 menggantikan konsensus tiga strategi v18 sebagai mesin sinyal teknikal utama untuk XAUUSD dan NASDAQ. Tujuh detector dikelompokkan menjadi tiga keluarga agar setup yang berkorelasi tidak dihitung sebagai suara terpisah:
 
-- **Reversal:** Liquidity Sweep, S/R Rejection, dan RSI 8 Close (menggantikan RSI Divergence).
+- **Reversal:** Liquidity Sweep, S/R Rejection, RSI Divergence.
 - **Continuation:** Trend Pullback, Fair Value Gap (FVG), Order Block.
 - **Breakout:** Momentum Breakout.
 
@@ -39,7 +46,7 @@ Default bawaan (semuanya bisa diubah lewat env, lihat `.env.example`):
 |---|---|---|
 | SL cadangan (ATR x) | 1,5 | 1,8 |
 | Batas SL dinamis (ATR x) | 1,0 sampai 2,5 | 1,2 sampai 3,0 |
-| RR TP1/TP2/TP3 | 2 / 3 / 4 | 2 / 3 / 4 |
+| RR TP1/TP2/TP3 | 2 / 3 / 4 | 1 / 1,5 / 2 |
 | Batas mengejar (x jarak SL) | 0,5 | 0,4 |
 | Batas waktu entry | 2 candle TF | 2 candle TF |
 | Risiko awal kalkulator lot | 1,0% | 0,5% |
@@ -57,7 +64,7 @@ Mesin sinyal teknikal XAUUSD di `signals.py` kini memakai tiga setup tambahan da
 2. **Trend Pullback** — tren EMA20/EMA50, pullback di sekitar EMA20 (toleransi 0,35 ATR), candle konfirmasi, dan RSI di sisi 50.
 3. **Momentum Breakout** — close menembus high/low 20 candle sebelumnya dengan body minimal 0,5 ATR.
 
-Dashboard menampilkan hasil tiap strategi, jumlah suara, dan status konsensus. Sinyal historis yang dipakai fitur tracking juga menggunakan aturan konsensus baru. Strategi pembanding EMA/RSI 8/perubahan 24 jam tetap dihitung dan ditampilkan sebagai pembanding (`legacy_direction`), bukan dihapus. Mesin konsensus ini berlaku untuk XAUUSD dan NASDAQ (sejak v17.1/v18).
+Dashboard menampilkan hasil tiap strategi, jumlah suara, dan status konsensus. Sinyal historis yang dipakai fitur tracking juga menggunakan aturan konsensus baru. Strategi lama EMA/RSI/perubahan 24 jam tetap dihitung dan ditampilkan sebagai pembanding (`legacy_direction`), bukan dihapus. Mesin konsensus ini berlaku untuk XAUUSD dan NASDAQ (sejak v17.1/v18).
 
 **Penting:** aturan ini adalah versi awal berbasis OHLC dan belum terbukti menghasilkan profit. Angka confidence 70/90 adalah skor jumlah strategi yang setuju, bukan probabilitas menang. Target drawdown di bawah 10% belum dapat diklaim tanpa backtest tick data, spread, komisi, slippage, dan validasi out-of-sample. Gunakan akun demo terlebih dahulu.
 
@@ -88,7 +95,7 @@ Uji mesin strategi: `python -m unittest tests.test_strategies -v`.
 (`https://nfs.faireconomy.media/ff_calendar_thisweek.json`, hanya memuat pekan berjalan). Feed gratis ini **tidak memuat Actual**,
 jadi Actual diketik manual tepat setelah rilis di kartu "Angka berita". Bila feed gagal terbaca, isi semuanya manual. Aplikasi tetap jalan.
 
-## Yang baru di v19.3 NEWS: dampak berita lintas instrumen (NEWS-only)
+## Yang baru di v19.2 NEWS: dampak berita lintas instrumen (NEWS-only)
 
 Pembaruan ini hanya menambah konteks analisis pada tab NEWS. Mesin sinyal teknikal di `signals.py`, profil risiko, konfirmasi M1, notifikasi sinyal teknikal, dan alur EA MT5 tidak diubah.
 
@@ -150,12 +157,3 @@ Uji memakai **harga dan riwayat sintetis buatan** untuk memeriksa logika kode. I
 - Riwayat reaksi per jenis berita hanya 4 sampai 8 kejadian (jadwal resmi 2025 akhir sampai 2026). Sampel sekecil itu membuat bukti statistik lemah, dan aplikasi menampilkannya apa adanya.
 - Aturan "Actual di atas Forecast = emas turun" adalah kecenderungan umum, bukan hukum. Pasar bisa bereaksi pada angka inti, revisi, atau nada pidato.
 - Feed Forex Factory adalah feed publik tidak resmi. Bisa berubah atau dibatasi sewaktu-waktu.
-
-
-## Pengaturan RSI terbaru (pengganti RSI lama)
-- Periode RSI: 8
-- Sumber perhitungan: Close
-- Level referensi: 15, 20, 30, 50, 70, 80, 85
-- Pemicu detector RSI: BUY ketika RSI menembus turun ke 30 atau lebih rendah; SELL ketika RSI menembus naik ke 70 atau lebih tinggi.
-- RSI 8 menjadi detector pada keluarga reversal. Detector strategi lain (liquidity sweep, S/R rejection, trend pullback, breakout, FVG, dan order block) tetap dipertahankan.
-- RSI 8 tidak menjadi sinyal tunggal yang mengabaikan filter konfirmasi strategi lain; mesin konsensus dan filter risiko tetap berjalan.
