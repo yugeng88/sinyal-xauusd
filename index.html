@@ -173,7 +173,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.7 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.8 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -553,15 +553,30 @@ function renderNews(j){
       <button class="nbtn" id="nbtn" type="button">Hitung</button>
       ${sur&&sur.text?`<div class="sur">${esc(sur.text)}</div>`:`<p class="note" style="margin-top:8px">Isi Forecast dan Previous (atau Actual) untuk membaca kejutan angka.</p>`}
       <p class="note" style="margin-top:6px">Sumber angka: ${esc(inp.source||"belum ada")}.${inp.feed_error?` Kalender Forex Factory belum terbaca (${esc(inp.feed_error)}); isi manual.`:""}</p></section>` : "";
-  const L = j.signal_log, LS = (L && L.stats) || {};
+  const L = j.signal_log, BK = (L && L.by_kind) || {};
   const RES = {BENAR:["BENAR ✓","tp"], SALAH:["SALAH ✗","sl"], NETRAL:["NETRAL","WAIT"], "TIDAK TERUKUR":["tidak terukur","WAIT"]};
   const logRows = ((L && L.entries) || []).map(x=>{ const r = x.result ? RES[x.result]||[x.result,"WAIT"] : ["BERJALAN","WAIT"];
-    return `<tr><td>${esc(wibShort(x.issued))}</td><td>${esc(x.short)}</td><td class="${esc(x.direction)}">${esc(x.direction)}</td><td>${px(x.entry)}</td>
+    return `<tr><td>${esc(wibShort(x.issued))}</td><td>${esc(x.short)}<br><small>${x.kind==="BIAS"?"bias pra-news":"sinyal entry"}</small></td><td class="${esc(x.direction)}">${esc(x.direction)}</td><td>${px(x.entry)}</td>
       <td class="${r[1]}"><b>${esc(r[0])}</b>${x.why?`<br><small>${esc(x.why)}${x.move!=null?` · ${x.move>0?"+":""}${fmt(x.move)} poin`:""}</small>`:""}</td></tr>`; }).join("");
+  const sline = (name, t) => t && t.total ? `<b>${name}:</b> ${t.resolved ? `<b class="tp">${t.benar} benar</b>, <b class="sl">${t.salah} salah</b> (akurasi ${t.acc}%)` : "belum ada yang selesai dinilai"}${t.netral?`, ${t.netral} netral`:""}${t.berjalan?`, ${t.berjalan} berjalan`:""}. ` : "";
+  const logSummary = sline("Sinyal entry", BK.ENTRY) + sline("Bias pra-news", BK.BIAS);
   const logCard = `<section class="card"><h2>Riwayat sinyal news</h2>
-    <p class="note">${LS.resolved ? `Sudah dinilai: <b class="tp">${LS.benar} benar</b>, <b class="sl">${LS.salah} salah</b>${LS.netral?`, ${LS.netral} netral`:""} (akurasi ${LS.acc}%).${LS.berjalan?` ${LS.berjalan} masih berjalan.`:""}` : (LS.total ? `${LS.berjalan||0} sinyal masih berjalan, belum ada yang selesai dinilai.` : "Belum ada sinyal news yang diterbitkan sejak pencatatan ini aktif.")}
-      Benar = TP1 tersentuh lebih dulu dalam 60 menit. Salah = SL tersentuh lebih dulu.</p>
+    <p class="note">${logSummary || "Belum ada sinyal news yang diterbitkan sejak pencatatan ini aktif."}
+      Sinyal entry: benar = TP1 tersentuh lebih dulu dalam 60 menit, salah = SL lebih dulu. Bias pra-news: benar bila 30 menit sejak rilis harga searah bias.</p>
     ${logRows ? `<table class="hist"><thead><tr><th>Terbit (WIB)</th><th>Berita</th><th>Arah</th><th>Entry</th><th>Hasil</th></tr></thead><tbody>${logRows}</tbody></table>` : ""}</section>`;
+  const AN = f.analysis;
+  const anList = AN ? AN.checklist.map(c=>`<li>${c.ok?"✅":"▫️"} <b>${esc(c.label)}</b>: ${esc(c.detail)}</li>`).join("") : "";
+  const anAsp = AN ? AN.aspects.map(a=>`<tr><td>${esc(a.label)}</td><td class="${a.vote==null||a.vote_name==="netral"?"WAIT":esc(a.vote_name)}">${a.vote==null?"–":`${esc(a.vote_name)} (${a.vote>0?"+":""}${fmt(a.vote)})`}</td><td><small>${esc(a.note||"")}</small></td></tr>`).join("") : "";
+  const anHl = AN ? AN.headlines.map(h=>`<li>${h.link?`<a href="${esc(h.link)}" target="_blank" rel="noopener noreferrer">${esc(h.title)}</a>`:esc(h.title)} <small>${esc(h.source||"")}${h.ts?` · ${esc(wibShort(new Date(h.ts*1000).toISOString()))}`:""}</small></li>`).join("") : "";
+  const FU = AN && AN.fusion;
+  const anCard = AN ? `<section class="card"><h2>Analisis lengkap sebelum sinyal</h2>
+    <ul style="list-style:none;padding:0;margin:6px 0;font-size:14px;line-height:1.7">${anList}</ul>
+    <p class="note">Bias gabungan: <b class="${FU.bias}">${FU.bias==="WAIT"?"BELUM ADA":esc(FU.bias)+" "+FU.confidence+"%"}</b> · ${FU.available} aspek terkumpul${FU.score!=null?` · skor ${FU.score>0?"+":""}${fmt(FU.score)}`:""}. ${FU.reasons.map(esc).join(" ")}</p>
+    <table class="hist"><thead><tr><th>Aspek</th><th>Suara</th><th>Dasar</th></tr></thead><tbody>${anAsp}</tbody></table>
+    ${AN.ai && AN.ai.ok ? `<p class="note"><b>Analisis AI (${esc(AN.ai.model||"")}):</b> ${esc(AN.ai.summary)}${AN.ai.risks&&AN.ai.risks.length?` Risiko: ${AN.ai.risks.map(esc).join("; ")}.`:""}</p>` : ""}
+    ${anHl ? `<p class="note" style="margin-bottom:2px"><b>Berita terkini</b> (judul dari RSS, bukan ringkasan isi):</p><ul class="note" style="margin-top:2px;padding-left:18px">${anHl}</ul>` : ""}
+    ${AN.notes && AN.notes.length ? `<p class="note">${AN.notes.map(esc).join(" ")}</p>` : ""}
+    <p class="note">Bias ini informatif dan dicatat di riwayat untuk diukur akurasinya. Sinyal entry hanya keluar bila minimal 3 aspek terkumpul dan analisis lengkap tidak berlawanan kuat. Bukan saran investasi.</p></section>` : "";
   v.innerHTML = `
     <div class="evs">${evs}</div>
     <section class="card">
@@ -574,6 +589,7 @@ function renderNews(j){
     </section>
     ${numcard}
     ${impactCard}
+    ${anCard}
     ${logCard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
     <section class="card">${HOW}</section>

@@ -241,7 +241,7 @@ def confirm_message(label, tf, a, c, off=0.0):
             "Jangan mengejar jika harga sudah menjauh. Bukan saran investasi.")
 
 
-def news_pre_message(ev, sig, minutes_left, off=0.0):
+def news_pre_message(ev, sig, minutes_left, off=0.0, analysis=None):
     head = f"{ev['short']} {minutes_left:.0f} menit lagi · {wib(ev['t0'])}"
     lines = []
     if sig["direction"] in ("BUY", "SELL"):
@@ -251,6 +251,10 @@ def news_pre_message(ev, sig, minutes_left, off=0.0):
             lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
     else:
         lines.append("Tidak ada prediksi arah. Tunggu angka rilis dan reaksi harga.")
+    if analysis:
+        fu = analysis["fusion"]
+        txt = f"bias {fu['bias']} {fu['confidence']}%" if fu["bias"] in ("BUY", "SELL") else "belum ada bias"
+        lines.append(f"Analisis lengkap: {txt} ({fu['available']} aspek terkumpul). Hanya bias; entry baru setelah rilis dan harga bereaksi.")
     st = sig.get("straddle")
     if st:
         lines.append(f"Zona breakout: di atas {fp(st['buy_above'], off)} atau di bawah {fp(st['sell_below'], off)} "

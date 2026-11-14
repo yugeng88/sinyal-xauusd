@@ -62,20 +62,23 @@ def record(ev, sig, now=None):
     if not sig or sig.get("direction") not in ("BUY", "SELL"):
         return None
     lv = sig.get("levels") or {}
+    kind = sig.get("kind") or "PASCA"
     entry = lv.get("entry")
-    if entry is None:
+    if kind == "BIAS":
+        entry = None                    # bias pra-news dinilai dari harga saat rilis, bukan dari harga saat terbit
+    elif entry is None:
         r = sig.get("reaction") or {}
         if r.get("p0") is None:
             return None
         entry = round(float(r["p0"]) + float(r.get("move") or 0.0), 2)
-    kind = sig.get("kind") or "PASCA"
     rid = f"{ev['id']}:{kind}"
     rows = _load(force=True)
     if any(r["id"] == rid for r in rows):
         return None
     ts = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
     row = {"id": rid, "ev": ev["id"], "type": ev["type"], "short": ev["short"], "kind": kind,
-           "direction": sig["direction"], "issued": ts.isoformat(), "entry": float(entry),
+           "direction": sig["direction"], "issued": ts.isoformat(), "t0": ev.get("t0"),
+           "entry": None if entry is None else float(entry),
            "sl": lv.get("stop_loss"), "tp1": lv.get("tp1"), "conf": sig.get("confidence"),
            "result": None, "why": None, "move": None, "closed": None, "notified": False}
     rows.append(row)
@@ -86,6 +89,8 @@ def record(ev, sig, now=None):
 def evaluate(row, m5, now):
     """Nilai satu catatan. Kembalikan dict {result, why, move, closed} bila sudah bisa dinilai, selain itu None."""
     now = pd.Timestamp(now)
+    if row.get("kind") == "BIAS":
+        return _evaluate_bias(row, m5, now)
     t0 = pd.Timestamp(row["issued"])
     sg = 1 if row["direction"] == "BUY" else -1
     has_levels = row.get("sl") is not None and row.get("tp1") is not None
@@ -128,6 +133,34 @@ def evaluate(row, m5, now):
     return None
 
 
+def _evaluate_bias(row, m5, now):
+    """Bias pra-news: benar bila 30 menit sejak rilis harga bergerak searah bias (dari open candle M5 saat rilis)."""
+    rel = pd.Timestamp(row["t0"])
+    sg = 1 if row["direction"] == "BUY" else -1
+    horizon = rel + pd.Timedelta(minutes=QUICK_MIN)
+    bars = pd.DataFrame()
+    if m5 is not None and len(m5):
+        t = pd.to_datetime(m5["time"], utc=True)
+        bars = m5[(t >= rel) & (t + pd.Timedelta(minutes=5) <= min(now, horizon))].sort_values("time")
+
+    def done(result, why, entry=None, mv=None):
+        return {"result": result, "why": why, "move": mv, "closed": now.isoformat(),
+                **({"entry": entry} if entry is not None else {})}
+
+    if now >= horizon:
+        if not len(bars) or pd.Timestamp(bars["time"].iloc[0]) > rel + pd.Timedelta(minutes=5):
+            return done("TIDAK TERUKUR", "data candle saat rilis tidak tersedia")
+        entry, last = float(bars["open"].iloc[0]), float(bars["close"].iloc[-1])
+        mv = round(sg * (last - entry), 2)
+        if abs(mv) < FLAT_MOVE:
+            return done("NETRAL", f"{QUICK_MIN} menit sejak rilis: harga nyaris tidak bergerak", entry, mv)
+        return done("BENAR" if mv > 0 else "SALAH",
+                    f"{QUICK_MIN} menit sejak rilis: harga {'searah' if mv > 0 else 'berlawanan'} dengan bias pra-news", entry, mv)
+    if now >= rel + pd.Timedelta(hours=GIVE_UP_HOURS):
+        return done("TIDAK TERUKUR", "data candle saat rilis tidak tersedia")
+    return None
+
+
 def stats(rows):
     res = [r.get("result") for r in rows]
     benar, salah = res.count("BENAR"), res.count("SALAH")
@@ -154,12 +187,15 @@ def refresh(m5, now=None):
                 changed = True
     if changed:
         _save(rows)
-    return {"entries": list(reversed(rows[-12:])), "stats": stats(rows)}
+    return {"entries": list(reversed(rows[-12:])), "stats": stats(rows),
+            "by_kind": {"BIAS": stats([r for r in rows if r.get("kind") == "BIAS"]),
+                        "ENTRY": stats([r for r in rows if r.get("kind") != "BIAS"])}}
 
 
 def pending_wrong():
     """Catatan SALAH yang belum diberi tahu lewat notifikasi."""
-    return [r for r in _load(force=True) if r.get("result") == "SALAH" and not r.get("notified")]
+    return [r for r in _load(force=True)
+            if r.get("result") == "SALAH" and not r.get("notified") and r.get("kind") != "BIAS"]
 
 
 def mark_notified(rid):

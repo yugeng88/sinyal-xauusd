@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.7 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.8 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,25 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.8: analisis lengkap sebelum sinyal news (`news_context.py`)
+
+Sebelum sinyal entry news keluar, aplikasi mengumpulkan enam aspek lalu menggabungkannya:
+1. **Riwayat reaksi emas** pada kejadian lalu (bawaan 12 kejadian, env `NEWS_HISTORY_N`, maksimal 40; makin banyak makin banyak kuota Twelve Data/OANDA).
+2. **Harga dan tren H1** saat ini.
+3. **Angka rilis** (Forecast, Previous, Actual) dari kalender Forex Factory.
+4. **Berita terkini**: judul 3 hari terakhir dari RSS Google News (tanpa kunci), tentang jenis berita dan harga emas.
+5. **Sentimen judul**: kamus frasa sederhana dari sudut pandang emas (tanpa penanganan negasi, jadi hanya satu aspek).
+6. **Analisis AI** (opsional): isi env `ANTHROPIC_API_KEY` (dan `NEWS_AI_MODEL`, bawaan `claude-sonnet-5-5`; `NEWS_AI_TIMEOUT` detik, bawaan 6). Judul berita dikirim sebagai data, bukan instruksi, keyakinan AI dibatasi 70%, hasil di-cache 15 menit. Tanpa kunci, aspek ini dilewati.
+
+Aturan penggabungan:
+- Bias gabungan baru ada bila minimal **3 aspek** terkumpul dan **2 searah**; keyakinan dikali kelengkapan data dan dibatasi 65%.
+- **Gerbang sinyal entry setelah rilis:** ditahan (TUNGGU) bila analisis lengkap baru <3 aspek (`NEWS_MIN_ASPECTS`) atau berlawanan arah dengan keyakinan >=55%; bila searah, keyakinan +10 (maksimal 80). Matikan gerbang dengan `NEWS_REQUIRE_ANALYSIS=off`.
+- Analisis dihitung untuk berita yang tinggal <=24 jam (`NEWS_ANALYSIS_HOURS`) atau sudah rilis. Matikan semua dengan `NEWS_CONTEXT=off`.
+- **Bias pra-news dicatat dan dinilai**: benar bila 30 menit sejak rilis harga searah bias. Hasilnya tampil terpisah dari sinyal entry di kartu "Riwayat sinyal news". Tidak ada notifikasi SALAH untuk bias, hanya untuk sinyal entry.
+- Sinyal pra-news tetap tanpa arah entry (lihat v19.5).
+
+Batasan jujur: judul RSS bukan isi artikel, kamus sentimen kasar, AI bisa keliru dan menambah biaya/latensi, dan Forecast/Actual masa lalu tidak tersedia dari kalender, jadi "tahun lampau" hanya berupa reaksi harga emas pada kejadian lalu. Tanggal berita sebelum 2026 belum ada di jadwal.
 
 ## Yang baru di v19.7: kartu risiko mendukung akun cent
 

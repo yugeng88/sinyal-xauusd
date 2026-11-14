@@ -20,7 +20,14 @@ import pandas as pd
 import requests
 
 MIN_N = 6                  # minimum kejadian historis agar statistik dipakai
-HISTORY_N = 8              # jumlah kejadian terakhir yang dipelajari per jenis berita
+def _hist_n():
+    try:
+        return max(3, min(40, int(os.getenv("NEWS_HISTORY_N", "") or 12)))
+    except ValueError:
+        return 12
+
+
+HISTORY_N = _hist_n()      # jumlah kejadian terakhir yang dipelajari per jenis berita (env NEWS_HISTORY_N, bawaan 12)
 WIN_BEFORE = 125           # menit sebelum rilis (candle M5)
 WIN_AFTER = 125            # menit sesudah rilis
 SETTLE_MIN = 5             # menit pertama setelah rilis: jangan entry

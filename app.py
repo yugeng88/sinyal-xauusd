@@ -18,13 +18,14 @@ from flask import Flask, Response, jsonify, request
 
 import data
 import news
+import news_context
 import news_intelligence
 import news_log
 import notify
 import page
 import signals
 
-VERSION = "19.7"
+VERSION = "19.8"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -445,6 +446,18 @@ def news_view(ev_id=None, now=None, manual=None):
                  "h1_label": None if not h1 else f"{h1['direction']} (skor {h1['score']:+d})",
                  "inputs": inputs, "surprise": sur, "market_impact": market_impact,
                  "nasdaq_h1_label": None if not nasdaq_h1 else f"{nasdaq_h1['direction']} (skor {nasdaq_h1['score']:+d})"}
+    analysis = None                                     # analisis lengkap: riwayat, angka, harga, berita, sentimen, AI
+    hrs_left = -focus["minutes"] / 60.0 if focus["status"] == "PRA" else None
+    try:
+        want = focus["status"] in ("RILIS", "PASCA") or (
+            hrs_left is not None and hrs_left <= float(os.getenv("NEWS_ANALYSIS_HOURS", "") or 24))
+        if want and os.getenv("NEWS_CONTEXT", "").strip().lower() not in ("off", "0", "no"):
+            pre_f = news.pre_signal(summ, ctx, live, None, None, h1_score=h1_score, sur=sur)["factors"]
+            analysis = news_context.build(focus, summ, sur, pre_f, live, h1_score, "PRA" if hrs_left is not None else "PASCA",
+                                          ai_budget=float(os.getenv("NEWS_AI_TIMEOUT", "") or 6))
+    except Exception as e:  # noqa: BLE001  analisis tambahan tidak boleh merusak halaman
+        analysis = None
+    out_focus["analysis"] = analysis
     if focus["status"] == "PRA" and -focus["minutes"] / 60.0 > news.pre_signal_hours():
         out_focus["signal"] = news.far_signal(focus["minutes"])           # masih jauh: tanpa arah
     elif focus["status"] == "PRA":
@@ -461,7 +474,10 @@ def news_view(ev_id=None, now=None, manual=None):
             out_focus["signal"] = {"kind": "PASCA", "direction": "WAIT", "factors": [],
                                    "reasons": ["Candle M5 saat rilis belum tersedia di sumber data."]}
         else:
-            out_focus["signal"] = news.post_signal(summ, float(bar["open"].iloc[0]), live, focus["minutes"], sur=sur)
+            ps = news.post_signal(summ, float(bar["open"].iloc[0]), live, focus["minutes"], sur=sur)
+            if os.getenv("NEWS_REQUIRE_ANALYSIS", "").strip().lower() not in ("off", "0", "no"):
+                ps = news_context.gate(ps, analysis, int(os.getenv("NEWS_MIN_ASPECTS", "") or news_context.MIN_ASPECTS))
+            out_focus["signal"] = ps
     else:
         out_focus["signal"] = {"kind": "SELESAI", "direction": "WAIT", "reasons": ["Berita ini sudah selesai. Pilih berita berikutnya."]}
     shown = [e for e in evs if e["status"] != "SELESAI"][:6] + [e for e in evs if e["status"] == "SELESAI"][-2:]
@@ -618,7 +634,10 @@ def cron_run(ts=None, click=None):
             directional = s["direction"] in ("BUY", "SELL")
             if directional:
                 news_log.record(ev, s, ts)
-            title, msg = notify.news_pre_message(ev, s, left, off)
+            an = v.get("analysis")
+            if an and an["fusion"]["bias"] in ("BUY", "SELL"):          # bias pra-news dicatat agar akurasinya terukur
+                news_log.record(ev, {"kind": "BIAS", "direction": an["fusion"]["bias"], "confidence": an["fusion"]["confidence"]}, ts)
+            title, msg = notify.news_pre_message(ev, s, left, off, analysis=an)
             claim = k5 if stage == "5" else k30
             r = notify.deliver(claim, title, msg, 4 if directional else 3,
                                ["chart_with_upwards_trend" if directional else "bell"], click)
