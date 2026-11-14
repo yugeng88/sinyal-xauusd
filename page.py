@@ -173,7 +173,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.4 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.5 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -547,6 +547,15 @@ function renderNews(j){
       <button class="nbtn" id="nbtn" type="button">Hitung</button>
       ${sur&&sur.text?`<div class="sur">${esc(sur.text)}</div>`:`<p class="note" style="margin-top:8px">Isi Forecast dan Previous (atau Actual) untuk membaca kejutan angka.</p>`}
       <p class="note" style="margin-top:6px">Sumber angka: ${esc(inp.source||"belum ada")}.${inp.feed_error?` Kalender Forex Factory belum terbaca (${esc(inp.feed_error)}); isi manual.`:""}</p></section>` : "";
+  const L = j.signal_log, LS = (L && L.stats) || {};
+  const RES = {BENAR:["BENAR ✓","tp"], SALAH:["SALAH ✗","sl"], NETRAL:["NETRAL","WAIT"], "TIDAK TERUKUR":["tidak terukur","WAIT"]};
+  const logRows = ((L && L.entries) || []).map(x=>{ const r = x.result ? RES[x.result]||[x.result,"WAIT"] : ["BERJALAN","WAIT"];
+    return `<tr><td>${esc(wibShort(x.issued))}</td><td>${esc(x.short)}</td><td class="${esc(x.direction)}">${esc(x.direction)}</td><td>${px(x.entry)}</td>
+      <td class="${r[1]}"><b>${esc(r[0])}</b>${x.why?`<br><small>${esc(x.why)}${x.move!=null?` · ${x.move>0?"+":""}${fmt(x.move)} poin`:""}</small>`:""}</td></tr>`; }).join("");
+  const logCard = `<section class="card"><h2>Riwayat sinyal news</h2>
+    <p class="note">${LS.resolved ? `Sudah dinilai: <b class="tp">${LS.benar} benar</b>, <b class="sl">${LS.salah} salah</b>${LS.netral?`, ${LS.netral} netral`:""} (akurasi ${LS.acc}%).${LS.berjalan?` ${LS.berjalan} masih berjalan.`:""}` : (LS.total ? `${LS.berjalan||0} sinyal masih berjalan, belum ada yang selesai dinilai.` : "Belum ada sinyal news yang diterbitkan sejak pencatatan ini aktif.")}
+      Benar = TP1 tersentuh lebih dulu dalam 60 menit. Salah = SL tersentuh lebih dulu.</p>
+    ${logRows ? `<table class="hist"><thead><tr><th>Terbit (WIB)</th><th>Berita</th><th>Arah</th><th>Entry</th><th>Hasil</th></tr></thead><tbody>${logRows}</tbody></table>` : ""}</section>`;
   v.innerHTML = `
     <div class="evs">${evs}</div>
     <section class="card">
@@ -559,6 +568,7 @@ function renderNews(j){
     </section>
     ${numcard}
     ${impactCard}
+    ${logCard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
     <section class="card">${HOW}</section>
     <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI, PPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.

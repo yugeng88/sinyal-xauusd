@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.4 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.5 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.5: sinyal NEWS lebih jujur, ada riwayat benar/salah
+
+- **Tidak ada prediksi arah sebelum rilis.** Kartu dan notifikasi pra-news hanya memuat zona breakout (rencana bersyarat). Bisa dinyalakan lagi dengan `NEWS_PRE_DIRECTION=on` (tidak disarankan).
+- **Sinyal sesudah rilis lebih ketat:** tanpa angka Actual, arah dari harga saja baru dikeluarkan setelah menit ke-10 dan kekuatan buktinya maksimal 50%; bila angka dan harga bertentangan hasilnya TUNGGU; kekuatan bukti tidak pernah 100% (maksimal 80%).
+- **Riwayat sinyal news** (kartu di tab NEWS, file `news_log.py`): setiap sinyal BUY/SELL news yang diterbitkan dicatat, lalu dinilai dari candle M5. BENAR = TP1 lebih dulu, SALAH = SL lebih dulu (SL dan TP1 satu candle dihitung SALAH), NETRAL = 60 menit tanpa keduanya. Sinyal yang SALAH juga dikirim sebagai notifikasi. Disimpan di Redis bila tersedia.
+- **Pembacaan kalender lebih andal:** sekitar jam rilis (3 menit sebelum sampai 45 menit sesudah) kalender dibaca tiap 90 detik agar Actual cepat terbaca; saat server membatasi (429) atau gagal, data terakhir yang berhasil tetap dipakai dan permintaan ditunda.
 
 ## Yang baru di v19.4: kembali ke RSI 14 + Divergence, perapian kecil
 

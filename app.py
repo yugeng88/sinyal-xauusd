@@ -19,11 +19,12 @@ from flask import Flask, Response, jsonify, request
 import data
 import news
 import news_intelligence
+import news_log
 import notify
 import page
 import signals
 
-VERSION = "19.4"
+VERSION = "19.5"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -450,7 +451,10 @@ def news_view(ev_id=None, now=None, manual=None):
         pre = m5[(m5["time"] >= t0 - pd.Timedelta(minutes=60)) & (m5["time"] < t0)] if m5 is not None else None
         hi = None if pre is None or len(pre) < 6 else float(pre["high"].max())
         lo = None if pre is None or len(pre) < 6 else float(pre["low"].min())
-        out_focus["signal"] = news.pre_signal(summ, ctx, live, hi, lo, h1_score=h1_score, sur=sur)
+        sig = news.pre_signal(summ, ctx, live, hi, lo, h1_score=h1_score, sur=sur)
+        if os.getenv("NEWS_PRE_DIRECTION", "").strip().lower() not in ("on", "1", "yes"):
+            sig = news.no_direction(sig)               # prediksi arah sebelum rilis dimatikan (tidak terbukti andal)
+        out_focus["signal"] = sig
     elif focus["status"] in ("RILIS", "PASCA"):
         bar = None if m5 is None else m5[m5["time"] == t0]
         if bar is None or len(bar) == 0 or live is None:
@@ -463,6 +467,7 @@ def news_view(ev_id=None, now=None, manual=None):
     shown = [e for e in evs if e["status"] != "SELESAI"][:6] + [e for e in evs if e["status"] == "SELESAI"][-2:]
     shown.sort(key=lambda e: e["t0"])
     return {"now": ts.isoformat(), "events": shown, "focus": out_focus,
+            "signal_log": news_log.refresh(m5, ts),
             "source": None if m5 is None else (states[("XAUUSD", "M5")]["signal"] or {}).get("source"),
             "error": states[("XAUUSD", "M5")]["error"]}
 
@@ -611,6 +616,8 @@ def cron_run(ts=None, click=None):
                 continue
             s = v["signal"]
             directional = s["direction"] in ("BUY", "SELL")
+            if directional:
+                news_log.record(ev, s, ts)
             title, msg = notify.news_pre_message(ev, s, left, off)
             claim = k5 if stage == "5" else k30
             r = notify.deliver(claim, title, msg, 4 if directional else 3,
@@ -626,10 +633,21 @@ def cron_run(ts=None, click=None):
             v = news_view(ev["id"], now=ts)["focus"]
             s = v["signal"]
             if s.get("direction") in ("BUY", "SELL"):
+                news_log.record(ev, s, ts)
                 title, msg = notify.news_post_message(ev, s, off)
                 r = notify.deliver(key, title, msg, 5, ["rotating_light"], click)
                 if r is not None:
                     sent.append({"jenis": "news_pasca", "target": ev["id"], "hasil": r})
+    try:                                              # kabari bila sinyal news yang pernah terbit ternyata SALAH
+        news_log.refresh(raw.get(("XAUUSD", "M5")), ts)
+        for row in news_log.pending_wrong():
+            title, msg = notify.news_result_message(row, off)
+            r = notify.deliver(f"nwx:{row['id']}", title, msg, 4, ["x"], click)
+            news_log.mark_notified(row["id"])
+            if r is not None:
+                sent.append({"jenis": "news_salah", "target": row["id"], "hasil": r})
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"catatan sinyal news: {type(e).__name__}")
     _last_cron["at"] = ts.isoformat()
     if time.time() - _cron_seen.get("w", 0) > 300:          # terbaca juga oleh instance lain; hemat kuota Redis
         notify.kv_set("last_cron", ts.isoformat())

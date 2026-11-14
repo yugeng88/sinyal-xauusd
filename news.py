@@ -24,6 +24,8 @@ HISTORY_N = 8              # jumlah kejadian terakhir yang dipelajari per jenis 
 WIN_BEFORE = 125           # menit sebelum rilis (candle M5)
 WIN_AFTER = 125            # menit sesudah rilis
 SETTLE_MIN = 5             # menit pertama setelah rilis: jangan entry
+SETTLE_NOACT_MIN = 10      # tanpa angka Actual: tunggu lebih lama sebelum percaya pada harga saja
+CONF_CAP, CONF_CAP_NOACT = 80, 50   # batas atas kekuatan bukti (tidak pernah 100%)
 DONE_MIN = 150             # setelah ini berita dianggap selesai
 
 TYPES = {
@@ -357,17 +359,36 @@ def surprise(typ, forecast=None, previous=None, actual=None):
 
 # ---------------------------------------------- kalender Forex Factory (Forecast & Previous)
 FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-_feed = {"at": 0.0, "rows": None, "ok": False, "err": None}
+_feed = {"at": 0.0, "rows": None, "ok": False, "err": None, "retry_until": 0.0}
 FEED_TTL, FEED_FAIL_TTL = 20 * 60, 10 * 60
+FEED_HOT_TTL, FEED_HOT_FAIL_TTL = 90, 45       # sekitar jam rilis angka Actual muncul: baca lebih sering
+HOT_BEFORE_MIN, HOT_AFTER_MIN = 3, 45
 
 
-def _feed_rows(now_ts=None, fetch=None):
-    """Baca feed mingguan (di-cache). Kembalikan list baris atau None. Tidak pernah melempar error."""
+def is_hot(ev, now_ts=None):
+    """True bila berita `ev` sedang di sekitar jam rilis (3 menit sebelum sampai 45 menit sesudah)."""
+    try:
+        t0 = datetime.fromisoformat(ev["t0"]).timestamp()
+    except (KeyError, ValueError, TypeError):
+        return False
+    now = time.time() if now_ts is None else now_ts
+    return -HOT_BEFORE_MIN * 60 <= now - t0 <= HOT_AFTER_MIN * 60
+
+
+def _feed_rows(now_ts=None, fetch=None, hot=False):
+    """Baca feed mingguan (di-cache). Kembalikan list baris atau None. Tidak pernah melempar error.
+    Saat `hot` (jam rilis) cache hanya 90 detik supaya angka Actual cepat terbaca; bila server membatasi (429)
+    atau gagal, baris terakhir yang berhasil tetap dipakai dan permintaan ditunda."""
     t = time.time() if now_ts is None else now_ts
     if os.getenv("NEWS_FEED", "").strip().lower() in ("off", "0", "no"):
         return None
-    ttl = FEED_TTL if _feed["ok"] else FEED_FAIL_TTL
+    if _feed["ok"]:
+        ttl = FEED_HOT_TTL if hot else FEED_TTL
+    else:
+        ttl = FEED_HOT_FAIL_TTL if hot else FEED_FAIL_TTL
     if _feed["at"] and t - _feed["at"] < ttl:
+        return _feed["rows"]
+    if t < _feed["retry_until"]:
         return _feed["rows"]
     _feed["at"] = t
     try:
@@ -376,15 +397,20 @@ def _feed_rows(now_ts=None, fetch=None):
         else:
             r = requests.get(os.getenv("NEWS_FEED_URL", FEED_URL), timeout=6,
                              headers={"User-Agent": "Mozilla/5.0 (sinyal-xauusd)"})
+            if r.status_code == 429:
+                try:
+                    wait = float(r.headers.get("Retry-After", "") or 0)
+                except ValueError:
+                    wait = 0.0
+                _feed["retry_until"] = t + max(wait, 120.0)
+                raise ValueError("kalender membatasi permintaan (429), ditunda")
             r.raise_for_status()
             rows = r.json()
         if not isinstance(rows, list):
             raise ValueError("format feed tidak dikenal")
-        _feed.update(rows=rows, ok=True, err=None)
+        _feed.update(rows=rows, ok=True, err=None, retry_until=0.0)
     except Exception as e:  # noqa: BLE001
         _feed.update(ok=False, err=f"{type(e).__name__}: {e}"[:160])
-        if _feed["rows"] is None:
-            _feed["rows"] = None
     return _feed["rows"]
 
 
@@ -402,7 +428,7 @@ def feed_values(ev, rows=None):
     cfg = SURPRISE_CFG.get(ev["type"])
     if not cfg:
         return None
-    rows = rows if rows is not None else _feed_rows()
+    rows = rows if rows is not None else _feed_rows(hot=is_hot(ev))
     if not rows:
         return None
     day = datetime.fromisoformat(ev["t0"]).astimezone(timezone.utc).date()
@@ -529,6 +555,19 @@ def pre_signal(summary, ctx_dir, live, pre_hi=None, pre_lo=None, h1_score=None, 
     return out
 
 
+def no_direction(sig):
+    """Sinyal pra-news TANPA prediksi arah. Arah sebelum angka keluar tidak terbukti andal, jadi dimatikan;
+    zona breakout (straddle) tetap ditampilkan sebagai rencana bersyarat."""
+    out = dict(sig)
+    out.update(direction="WAIT", strength=None, confidence=0, levels=None, score=None, factors=[])
+    out["reasons"] = [
+        "Tidak ada prediksi arah sebelum rilis. Arah tebakan sebelum angka keluar tidak terbukti andal "
+        "(angka berita sering membalik arah), jadi fitur ini dimatikan.",
+        "Arah baru diberikan SETELAH angka keluar dan harga bereaksi, dan hanya bila angka (Actual vs Forecast) serta harga searah.",
+        "Rencana aman: tunggu angka dan 1 candle M5 setelah rilis. Spread melebar dan harga acak tepat saat rilis."]
+    return out
+
+
 def post_signal(summary, p0, last_close, minutes_since, sur=None):
     """Sinyal SESUDAH rilis: reaksi harga (bobot terbesar) + kejutan angka (Actual vs Forecast) + pola lanjutan riwayat."""
     out = {"kind": "PASCA", "direction": "WAIT", "strength": None, "confidence": 0,
@@ -545,6 +584,12 @@ def post_signal(summary, p0, last_close, minutes_since, sur=None):
         out["reasons"].append("Rilis baru keluar. Spread lebar dan harga acak. Tunggu candle M5 pertama menutup (minimal 5 menit) sebelum entry.")
         if out["lean"]:
             out["reasons"].append(f"Arah awal dari angka: {out['lean']}. Masuk hanya bila harga setelah 5 menit ikut bergerak ke arah itu.")
+        return out
+
+    if sv is None and minutes_since < SETTLE_NOACT_MIN:
+        out["kind"] = "RILIS"
+        out["reasons"].append(f"Angka Actual belum terbaca. Arah dari harga saja tidak dipercaya sebelum menit ke-{SETTLE_NOACT_MIN}: "
+                              "tunggu angka (atau isi manual di kartu angka berita).")
         return out
 
     scale = summary.get("med_abs_r15") if n >= 3 else None
@@ -565,7 +610,9 @@ def post_signal(summary, p0, last_close, minutes_since, sur=None):
     s = _combine(fx)
     out["score"] = round(s, 3)
     if sv is not None and vp * sv < 0 and abs(vp) > 0.15 and abs(sv) > 0.15:
-        out["reasons"].append("Angka dan harga bertentangan: pasar tidak sependapat dengan kejutan angka. Reaksi harga diberi bobot lebih besar.")
+        out["reasons"].append("Angka dan harga bertentangan: pasar tidak sependapat dengan kejutan angka. TUNGGU, tidak ada sinyal.")
+        out["conflict"] = True
+        return out
     if abs(s) < FLOOR_POST:
         out["reasons"].append("Reaksi harga belum jelas (gerak kecil atau saling meniadakan dengan angka). Tunggu candle berikutnya.")
         return out
@@ -573,7 +620,9 @@ def post_signal(summary, p0, last_close, minutes_since, sur=None):
     sg = 1 if d == "BUY" else -1
     out["direction"] = d
     out["strength"] = _strength(s)
-    out["confidence"] = min(100, round(abs(s) * 100))
+    out["confidence"] = min(CONF_CAP if sv is not None else CONF_CAP_NOACT, round(abs(s) * 100))
+    if sv is None:
+        out["reasons"].append("Peringatan: arah ini dari harga saja karena angka Actual belum terbaca. Bukti lemah (dibatasi maksimal 50%).")
     out["reasons"].append(f"Arah {d} dari skor gabungan {s:+.2f}. Ini kecenderungan dari data, bukan prediksi.")
     if n < MIN_N:
         out["reasons"].append(f"Riwayat baru {n} kejadian (idealnya minimal {MIN_N}): bukti statistik masih lemah.")

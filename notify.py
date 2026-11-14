@@ -250,7 +250,7 @@ def news_pre_message(ev, sig, minutes_left, off=0.0):
         if lv:
             lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
     else:
-        lines.append("Belum ada bias arah: TUNGGU reaksi.")
+        lines.append("Tidak ada prediksi arah. Tunggu angka rilis dan reaksi harga.")
     st = sig.get("straddle")
     if st:
         lines.append(f"Zona breakout: di atas {fp(st['buy_above'], off)} atau di bawah {fp(st['sell_below'], off)} "
@@ -267,6 +267,16 @@ def news_post_message(ev, sig, off=0.0):
         lines.append(f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | TP1 {fp(lv['tp1'], off)} | TP2 {fp(lv['tp2'], off)}")
     lines.append("Bukan saran investasi.")
     return f"{ev['short']} · reaksi {sig['direction']}", "\n".join(lines)
+
+
+def news_result_message(row, off=0.0):
+    """Pemberitahuan bahwa sinyal news yang pernah diterbitkan ternyata SALAH."""
+    mv = row.get("move")
+    lines = [f"Sinyal {row['direction']} di {fp(row['entry'], off)} dinilai SALAH: {row.get('why') or 'hasil berlawanan'}."]
+    if mv is not None:
+        lines.append(f"Gerak akhir {mv:+.2f} poin terhadap arah sinyal.")
+    lines.append("Tercatat di tab NEWS (riwayat sinyal). Bukan saran investasi.")
+    return f"Sinyal {row['short']} {row['direction']} SALAH", "\n".join(lines)
 
 
 EXIT_REASON = {
