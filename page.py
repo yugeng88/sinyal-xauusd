@@ -152,8 +152,9 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <section class="card" id="riskcard" hidden>
     <h2>Manajemen risiko · <span id="rkname"></span></h2>
     <p class="note" id="rkprof"></p>
-    <p class="note">Isi berurutan: saldo akun (USD) · risiko per trade (%) · nilai per 1,00 poin untuk 1 lot (USD). Tersimpan di perangkat ini, terpisah untuk tiap instrumen.</p>
+    <p class="note">Isi berurutan: saldo akun · risiko per trade (%) · nilai per 1,00 poin untuk 1 lot (selalu USD). Untuk akun cent (USC), centang kotak di bawah dan isi saldo dalam USC. Tersimpan di perangkat ini, terpisah untuk tiap instrumen.</p>
     <div class="brow"><input id="rkbal" inputmode="decimal" autocomplete="off" placeholder="Saldo akun (USD)" aria-label="Saldo akun"><input id="rkpct" inputmode="decimal" autocomplete="off" placeholder="Risiko per trade (%)" aria-label="Risiko per trade dalam persen"></div>
+    <label class="note" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="rkcent" style="width:auto"> Akun cent: saldo dan hasil dalam USC</label>
     <div class="brow"><input id="rkpv" inputmode="decimal" autocomplete="off" placeholder="Nilai per 1,00 poin per 1 lot (USD)" aria-label="Nilai per poin per lot"></div>
     <div id="rkout"></div>
   </section>
@@ -173,7 +174,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.5 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.7 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -335,17 +336,23 @@ function updateRisk(){
   const bal = parseFloat(String($("rkbal").value).replace(",",".")), pct = parseFloat(String($("rkpct").value).replace(",",".")), pv = parseFloat(String($("rkpv").value).replace(",","."));
   if(!LV){ out.innerHTML = '<p class="note">Belum ada level aktif. Hitungan lot muncul saat ada sinyal.</p>'; return; }
   if(!(bal>0 && pct>0 && pv>0)){ out.innerHTML = '<p class="note">Isi saldo, risiko %, dan nilai poin untuk menghitung lot.</p>'; return; }
-  const amt = bal*pct/100, raw = amt/(LV.risk_points*pv), lots = Math.floor(raw*100+1e-9)/100;
+  const cent = !!($("rkcent") && $("rkcent").checked), U = cent ? "USC" : "USD", X = cent ? 100 : 1;   // pv selalu USD; saldo dan hasil mengikuti satuan akun
+  const balUsd = cent ? bal/100 : bal;
+  const amt = balUsd*pct/100, raw = amt/(LV.risk_points*pv), lots = Math.floor(raw*100+1e-9)/100;
+  const minLoss = 0.01*LV.risk_points*pv, minPct = minLoss/balUsd*100, over = minLoss > amt*1.0000001;
   out.innerHTML = `<div class="grid" style="margin-top:8px">
-    <div class="cell"><small>Risiko uang</small><b>${fmt(amt)} USD</b></div>
+    <div class="cell"><small>Risiko uang (${pct}% saldo)</small><b>${fmt(amt*X)} ${U}</b></div>
     <div class="cell"><small>Jarak SL${c && c.state==="CONFIRMED" ? " (dari M1)" : " (sinyal)"}</small><b>${fmt(LV.risk_points)}</b></div>
     <div class="cell"><small>Lot maksimum</small><b>${lots.toFixed(2)}</b></div>
-    <div class="cell"><small>Rugi bila SL</small><b class="sl">${fmt(lots*LV.risk_points*pv)} USD</b></div></div>
-    <p class="note">${lots<0.01?"Risiko uang terlalu kecil untuk lot minimum 0,01 pada jarak SL ini: naikkan saldo, kecilkan risiko, atau lewati setup. Jangan membulatkan ke atas. ":""}${pct>2?"Risiko di atas 2% per trade tergolong agresif. ":""}Nilai per poin per lot berbeda antar broker: cek spesifikasi kontrak simbol Anda. Lot dibulatkan ke bawah 0,01; periksa lot minimum dan margin di broker.</p>`;
+    <div class="cell"><small>Rugi bila SL</small><b class="sl">${fmt(lots*LV.risk_points*pv*X)} ${U}</b></div>
+    <div class="cell"><small>Rugi bila SL di lot minimum 0,01</small><b class="${over?"sl":""}">${fmt(minLoss*X)} ${U} (${fmt(minPct,1)}% saldo)</b></div></div>
+    ${over ? `<p class="note" style="color:var(--sell)"><b>Setup ini tidak muat di saldo Anda.</b> Lot terkecil 0,01 saja sudah merugi ${fmt(minLoss*X)} ${U} (${fmt(minPct,1)}% saldo) bila SL kena, sedangkan batas risiko Anda ${pct}% = ${fmt(amt*X)} ${U}. Lewati setup ini, naikkan saldo, atau cari instrumen/broker dengan nilai per poin yang lebih kecil. Jangan membulatkan lot ke atas.</p>` : ""}
+    <p class="note">${pct>2?"Risiko di atas 2% per trade tergolong agresif. ":""}Nilai per poin per lot berbeda antar broker: cek spesifikasi kontrak simbol Anda. Lot dibulatkan ke bawah 0,01; periksa lot minimum dan margin di broker.</p>`;
 }
 ["rkbal","rkpct","rkpv"].forEach(id=>{ const el = $(id); if(el) el.addEventListener("input", ()=>{
   const k = cur; if(id==="rkbal") ls("rkbal", el.value.trim()); else ls(id+"_"+k, el.value.trim());
   updateRisk(); }); });
+{ const ce = $("rkcent"); if(ce){ ce.checked = ls("rkcent")==="1"; ce.addEventListener("change", ()=>{ ls("rkcent", ce.checked ? "1" : ""); updateRisk(); }); } }
 
 function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k)||""; if(v) localStorage.setItem(k,v); else localStorage.removeItem(k); }catch(e){ return ""; } }
 function parsePrice(raw, ref){

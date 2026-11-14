@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.5 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.7 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,20 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.7: kartu risiko mendukung akun cent
+
+- Kartu "Manajemen risiko" punya kotak **Akun cent**: saldo dan hasil dalam USC (nilai per poin per lot tetap diisi dalam USD).
+- Kartu selalu menampilkan **rugi bila SL di lot minimum 0,01** (nilai dan persen saldo). Bila angka itu melebihi batas risiko Anda, muncul peringatan merah "Setup ini tidak muat di saldo Anda" dan lot tidak dibulatkan ke atas.
+- Contoh NASDAQ (nilai 1 USD per poin per lot, jarak SL 142,7 poin): lot 0,01 merugi 142,7 USC; pada saldo 1000 USC itu 14,3%.
+- Jarak SL bisa dipersempit lewat env (`SL_MIN_ATR_NASDAQ`, `SL_MAX_ATR_NASDAQ`, `ATR_MULT_NASDAQ`), tetapi SL yang lebih dekat dari kebisingan normal harga lebih sering kena.
+
+## Yang baru di v19.6: jadwal news 2027
+
+- Jadwal NFP, CPI, PPI (BLS), keputusan FOMC (Federal Reserve), dan sebagian PCE (BEA) untuk 2027 sudah ditambahkan dan diperiksa terhadap kalender resmi pada 14 Nov 2026.
+- Rapat FOMC 26-27 Okt 2027 khusus diskusi strategi tanpa voting suku bunga, jadi tidak dimasukkan.
+- PCE 2027: BEA baru menerbitkan sebagian tanggal (Mar, Mei, Agu, Sep, Okt, Nov, Des). Januari, Februari, April, Juni, dan Juli belum ada; tambahkan di `news.py` (`SCHEDULE["PCE"]`) setelah BEA menerbitkannya.
+- PCE 25 Nov dan 23 Des 2026 sekarang berstatus terkonfirmasi (tanpa tanda ≈).
 
 ## Yang baru di v19.5: sinyal NEWS lebih jujur, ada riwayat benar/salah
 
