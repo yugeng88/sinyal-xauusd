@@ -22,12 +22,17 @@ import requests
 MIN_N = 6                  # minimum kejadian historis agar statistik dipakai
 def _hist_n():
     try:
-        return max(3, min(40, int(os.getenv("NEWS_HISTORY_N", "") or 12)))
+        return max(3, min(300, int(os.getenv("NEWS_HISTORY_N", "") or 12)))
     except ValueError:
         return 12
 
 
-HISTORY_N = _hist_n()      # jumlah kejadian terakhir yang dipelajari per jenis berita (env NEWS_HISTORY_N, bawaan 12)
+HISTORY_N = _hist_n()      # jumlah kejadian terakhir yang dipelajari per jenis berita (env NEWS_HISTORY_N, bawaan 12, maks 300)
+_extra_past = {}           # tanggal lampau tambahan per jenis (mis. dari FRED sejak 2007)
+
+
+def set_extra_past(typ, dates):
+    _extra_past[typ] = sorted(set(dates))
 WIN_BEFORE = 125           # menit sebelum rilis (candle M5)
 WIN_AFTER = 125            # menit sesudah rilis
 SETTLE_MIN = 5             # menit pertama setelah rilis: jangan entry
@@ -166,7 +171,7 @@ def pick_focus(evs):
 def past_dates(typ, now, n=HISTORY_N):
     """Tanggal kejadian lampau (sudah selesai) untuk studi, terbaru dulu."""
     out = []
-    for d in SCHEDULE.get(typ, []):
+    for d in sorted(set(SCHEDULE.get(typ, [])) | set(_extra_past.get(typ, []))):
         t0 = event_utc(typ, date.fromisoformat(d))
         if (now - t0).total_seconds() / 60 >= DONE_MIN and (typ, d) not in ESTIMATED:
             out.append(d)
@@ -687,10 +692,16 @@ def _family_bounds(family, d):
     return min(x[0] for x in a), max(x[1] for x in a)
 
 
-def ensure_windows(family, dates, fetch_fn, per_minute=7, max_per_call=4, clock=time.monotonic):
-    """Ambil jendela candle yang belum ada, dengan pembatas kuota. Kembalikan status kemajuan."""
-    missing = [d for d in dates if (family, d) not in _win]
-    done_now, err, wait = 0, None, 0
+class _NoData(Exception):
+    """Penyedia data tidak punya candle untuk rentang ini (tanggal terlalu lama, libur, dst)."""
+
+
+def ensure_windows(family, dates, fetch_fn, per_minute=7, max_per_call=4, clock=time.monotonic, skip=()):
+    """Ambil jendela candle yang belum ada, dengan pembatas kuota. Tanggal di `skip` (sudah tersimpan atau
+    ditandai tidak tersedia) dilewati. Tanggal tanpa data tidak lagi menghalangi tanggal lain. Kembalikan status kemajuan."""
+    skip = set(skip)
+    missing = [d for d in dates if (family, d) not in _win and d not in skip]
+    done_now, err, wait, dead = 0, None, 0, []
     for d in missing:
         if done_now >= max_per_call:
             break
@@ -704,22 +715,49 @@ def ensure_windows(family, dates, fetch_fn, per_minute=7, max_per_call=4, clock=
             a, b = _family_bounds(family, d)
             df = fetch_fn(a, b)
             if df is None or len(df) < 20:
-                raise ValueError("data terlalu sedikit pada rentang itu")
+                raise _NoData("data terlalu sedikit pada rentang itu")
             _win[(family, d)] = df
             done_now += 1
+        except _NoData as e:
+            err = str(e)
+            dead.append(d)
+            continue                                   # lewati tanggal ini, lanjut ke yang lain
         except Exception as e:  # noqa: BLE001
             err = str(e)
             if "minute" in err.lower() or "credit" in err.lower() or "429" in err:
                 wait = 30
             break
-    left = [d for d in dates if (family, d) not in _win]
-    return {"total": len(dates), "done": len(dates) - len(left), "wait_seconds": wait, "error": err}
+    left = [d for d in dates if (family, d) not in _win and d not in skip and d not in dead]
+    return {"total": len(dates), "done": len(dates) - len(left), "wait_seconds": wait, "error": err, "dead": dead}
 
 
-def study(typ, dates):
+def collect_new_rows(typ, dates, stored):
+    """Ukur reaksi dari jendela yang baru terambil dan belum tersimpan. Kembalikan (baris baru, tanggal tanpa reaksi)."""
     fam = TYPES[typ]["family"]
+    new, bad = {}, []
+    for d in dates:
+        if d in stored:
+            continue
+        df = _win.get((fam, d))
+        if df is None:
+            continue
+        r = reaction(df, event_utc(typ, date.fromisoformat(d)))
+        if r:
+            r["date"] = d
+            new[d] = r
+        else:
+            bad.append(d)
+    return new, bad
+
+
+def study(typ, dates, stored=None):
+    fam = TYPES[typ]["family"]
+    stored = stored or {}
     rows = []
     for d in dates:
+        if d in stored:
+            rows.append(dict(stored[d]))
+            continue
         df = _win.get((fam, d))
         if df is None:
             continue

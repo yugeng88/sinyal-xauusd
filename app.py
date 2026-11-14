@@ -19,13 +19,15 @@ from flask import Flask, Response, jsonify, request
 import data
 import news
 import news_context
+import news_dates
 import news_intelligence
 import news_log
+import news_store
 import notify
 import page
 import signals
 
-VERSION = "19.8"
+VERSION = "19.9"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -424,13 +426,21 @@ def news_view(ev_id=None, now=None, manual=None):
     h1 = states[("XAUUSD", "H1")]["signal"]
     nasdaq_h1 = states[("NASDAQ", "H1")]["signal"]
     typ = focus["type"]
+    since = os.getenv("NEWS_HISTORY_FROM", "").strip()        # mis. 2007: tarik tanggal resmi dari FRED (butuh FRED_API_KEY)
+    if since.isdigit() and typ in news_dates.RELEASES:
+        news.set_extra_past(typ, news_dates.fred_dates(typ, int(since)))
     dates = news.past_dates(typ, ts.to_pydatetime())
     fam = news.TYPES[typ]["family"]
     per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
-    prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min)
+    stored = news_store.rows(typ)                             # hasil ukur yang sudah tersimpan permanen
+    prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min,
+                               skip=news_store.skip_dates(typ))
     if prog.get("error"):
         prog["error"] = data.scrub(prog["error"])
-    summ = news.study(typ, dates)
+    new_rows, bad_rows = news.collect_new_rows(typ, dates, stored)
+    news_store.put(typ, new_rows, list(prog.get("dead", [])) + bad_rows)
+    stored = {**stored, **new_rows}
+    summ = news.study(typ, dates, stored=stored)
     t0 = pd.Timestamp(focus["t0"])
     live = None if m5 is None else float(m5["close"].iloc[-1])
     usable_h1 = bool(h1) and not h1.get("market_closed")

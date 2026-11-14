@@ -174,7 +174,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.8 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.9 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -530,7 +530,7 @@ function renderNews(j){
   const fomc = f.type.startsWith("FOMC") ? `<p class="note" style="margin-top:10px"><b>FOMC punya dua sesi:</b> keputusan suku bunga pukul ${esc(wibShort(j.events.find(e=>e.type==="FOMC"&&e.date===f.date)?.t0 || f.t0).split(" ").pop())} WIB, lalu konferensi pers 30 menit sesudahnya. Konferensi pers sering membalik arah reaksi pertama, jadi dipelajari terpisah.</p>` : "";
   let stats = "";
   if(st.n){
-    const u = st.up60, rows = st.rows.map(r=>`<tr><td>${esc(r.date.slice(2))}</td><td>${sgn(r.r5)}</td><td>${sgn(r.r15)}</td><td>${sgn(r.r60)}</td><td>${fmt(r.up60+r.dn60)}</td></tr>`).join("");
+    const u = st.up60, rows = st.rows.slice(0,12).map(r=>`<tr><td>${esc(r.date.slice(2))}</td><td>${sgn(r.r5)}</td><td>${sgn(r.r15)}</td><td>${sgn(r.r60)}</td><td>${fmt(r.up60+r.dn60)}</td></tr>`).join("");
     stats = `<p class="statline">${st.n} kejadian terakhir. Harga naik di menit ke-60: ${u.k} dari ${u.n} (${Math.round(u.rate*100)}%, rentang 95%: ${Math.round(u.lo*100)}–${Math.round(u.hi*100)}%).
       Gerak 15 menit yang biasa: ${fmt(st.med_abs_r15)} poin, rentang 60 menit: ${fmt(st.med_range60)} poin.
       ${st.cont.n?`Reaksi besar lanjut searah: ${st.cont.k} dari ${st.cont.n}. `:""}${st.fade5.n?`Arah 5 menit pertama berbalik di menit ke-60: ${st.fade5.k} dari ${st.fade5.n}.`:""}

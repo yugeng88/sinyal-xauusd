@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.8 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.9 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,14 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.9: riwayat news panjang (opsional, sejak 2007)
+
+- `news_dates.py`: tanggal rilis resmi CPI, PPI, NFP, PCE sejak tahun yang Anda pilih, dari FRED (St. Louis Fed). Isi env `FRED_API_KEY` (gratis: fred.stlouisfed.org -> My Account -> API Keys) dan `NEWS_HISTORY_FROM=2007`. FOMC tidak tersedia dari FRED, jadi FOMC tetap memakai jadwal bawaan.
+- `news_store.py`: hasil ukur reaksi harga tiap kejadian disimpan permanen di Redis, jadi tiap kejadian hanya diambil SEKALI dari OANDA/Twelve Data (sebelumnya diambil ulang tiap instance baru menyala). Tanggal yang tidak ada datanya di penyedia ditandai dan dilewati 14 hari, tidak lagi menghalangi tanggal lain.
+- Jumlah kejadian yang dipelajari diatur `NEWS_HISTORY_N` (bawaan 12, maksimal 300). Untuk riwayat sejak 2007 set mis. `NEWS_HISTORY_N=300`. Pengambilan data berjalan bertahap (sesuai `NEWS_CALLS_PER_MIN`), jadi butuh waktu dan kuota; progres tampil di kartu riwayat.
+- Tanpa env di atas, perilaku sama seperti sebelumnya (hanya jadwal 2026-2027).
+- Batasan: data candle M5 emas sejak 2007 belum tentu tersedia di penyedia Anda (tanggal tanpa data dilewati); semua kejadian dihitung sama bobotnya, padahal pasar 2007-2015 berbeda dari sekarang. Karena itu `NEWS_HISTORY_N` bawaan tetap 12 (kejadian terbaru).
 
 ## Yang baru di v19.8: analisis lengkap sebelum sinyal news (`news_context.py`)
 
