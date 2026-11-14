@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.9 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.10 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,15 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.10: sinyal arah pra-news menyala, 1 jam sebelum rilis
+
+- **Sinyal arah (BUY/SELL dengan Entry, SL, TP) keluar mulai 1 jam sebelum rilis.** Sebelum itu kartu hanya TUNGGU. Ini membalik keputusan v19.5 (arah pra-news dimatikan) atas permintaan pengguna. Atur dengan `NEWS_PRE_SIGNAL_HOURS` (bawaan 1); matikan dengan `NEWS_PRE_DIRECTION=off`.
+- **Gerbang analisis lengkap berlaku juga untuk sinyal pra-news:** ditahan bila kurang dari 3 aspek terkumpul atau analisis berlawanan arah dengan keyakinan >=55%; bila searah keyakinan +10. Lewati dengan `NEWS_REQUIRE_ANALYSIS=off`.
+- **Notifikasi pra-news** dikirim 60 menit sebelum rilis (`NEWS_PRE_MIN`, bawaan 60; dulu 30) dan masih ada pengingat 5 menit sebelum rilis. Riwayat harga yang belum lengkap tidak lagi menunda notifikasi bila sudah ada minimal 3 kejadian.
+- **Penilaian sinyal pra-news:** dinilai dari saat terbit sampai 60 menit SETELAH rilis (benar bila TP1 tersentuh lebih dulu, salah bila SL lebih dulu), tampil terpisah di kartu "Riwayat sinyal news".
+- Cron memakai `history_sync` yang sama dengan halaman NEWS, jadi kuota data tidak terpakai dua kali dan hasil ukur tersimpan permanen.
+- Peringatan: arah sebelum angka keluar sering berbalik oleh angka berita; riwayat benar/salah di aplikasi adalah ukuran yang jujur untuk menilai apakah fitur ini layak dipercaya.
 
 ## Yang baru di v19.9: riwayat news panjang (opsional, sejak 2007)
 

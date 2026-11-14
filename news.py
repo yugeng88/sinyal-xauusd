@@ -282,11 +282,11 @@ SURPRISE_CFG = {
 W_TREND, W_HIST, W_FCST = 0.40, 0.35, 0.25     # bobot sinyal SEBELUM rilis
 W_PRICE, W_SURP, W_CONT = 0.50, 0.40, 0.10     # bobot sinyal SESUDAH rilis
 FLOOR_PRE, FLOOR_POST = 0.05, 0.12             # skor minimum agar arah dikeluarkan
-PRE_SIGNAL_HOURS = 24.0                        # sinyal arah sebelum rilis baru terbit sejak sekian jam sebelum rilis
+PRE_SIGNAL_HOURS = 1.0                         # sinyal arah sebelum rilis terbit sejak sekian jam sebelum rilis (env NEWS_PRE_SIGNAL_HOURS)
 
 
 def pre_signal_hours():
-    """Ambang jam (env NEWS_PRE_SIGNAL_HOURS, bawaan 24). Nilai tidak valid -> bawaan."""
+    """Ambang jam (env NEWS_PRE_SIGNAL_HOURS, bawaan 1). Nilai tidak valid -> bawaan."""
     try:
         v = float(os.getenv("NEWS_PRE_SIGNAL_HOURS", "") or PRE_SIGNAL_HOURS)
     except ValueError:

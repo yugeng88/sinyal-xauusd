@@ -174,7 +174,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.9 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.10 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -557,13 +557,13 @@ function renderNews(j){
   const L = j.signal_log, BK = (L && L.by_kind) || {};
   const RES = {BENAR:["BENAR ✓","tp"], SALAH:["SALAH ✗","sl"], NETRAL:["NETRAL","WAIT"], "TIDAK TERUKUR":["tidak terukur","WAIT"]};
   const logRows = ((L && L.entries) || []).map(x=>{ const r = x.result ? RES[x.result]||[x.result,"WAIT"] : ["BERJALAN","WAIT"];
-    return `<tr><td>${esc(wibShort(x.issued))}</td><td>${esc(x.short)}<br><small>${x.kind==="BIAS"?"bias pra-news":"sinyal entry"}</small></td><td class="${esc(x.direction)}">${esc(x.direction)}</td><td>${px(x.entry)}</td>
+    return `<tr><td>${esc(wibShort(x.issued))}</td><td>${esc(x.short)}<br><small>${x.kind==="BIAS"?"bias pra-news":x.kind==="PRA"?"sinyal pra-news":"sinyal entry"}</small></td><td class="${esc(x.direction)}">${esc(x.direction)}</td><td>${px(x.entry)}</td>
       <td class="${r[1]}"><b>${esc(r[0])}</b>${x.why?`<br><small>${esc(x.why)}${x.move!=null?` · ${x.move>0?"+":""}${fmt(x.move)} poin`:""}</small>`:""}</td></tr>`; }).join("");
   const sline = (name, t) => t && t.total ? `<b>${name}:</b> ${t.resolved ? `<b class="tp">${t.benar} benar</b>, <b class="sl">${t.salah} salah</b> (akurasi ${t.acc}%)` : "belum ada yang selesai dinilai"}${t.netral?`, ${t.netral} netral`:""}${t.berjalan?`, ${t.berjalan} berjalan`:""}. ` : "";
-  const logSummary = sline("Sinyal entry", BK.ENTRY) + sline("Bias pra-news", BK.BIAS);
+  const logSummary = sline("Sinyal pra-news", BK.PRA) + sline("Sinyal entry (setelah rilis)", BK.ENTRY) + sline("Bias pra-news", BK.BIAS);
   const logCard = `<section class="card"><h2>Riwayat sinyal news</h2>
     <p class="note">${logSummary || "Belum ada sinyal news yang diterbitkan sejak pencatatan ini aktif."}
-      Sinyal entry: benar = TP1 tersentuh lebih dulu dalam 60 menit, salah = SL lebih dulu. Bias pra-news: benar bila 30 menit sejak rilis harga searah bias.</p>
+      Sinyal berlevel: benar = TP1 tersentuh lebih dulu, salah = SL lebih dulu (sinyal pra-news dinilai sampai 60 menit setelah rilis, sinyal setelah rilis 60 menit sejak terbit). Bias pra-news: benar bila 30 menit sejak rilis harga searah bias.</p>
     ${logRows ? `<table class="hist"><thead><tr><th>Terbit (WIB)</th><th>Berita</th><th>Arah</th><th>Entry</th><th>Hasil</th></tr></thead><tbody>${logRows}</tbody></table>` : ""}</section>`;
   const AN = f.analysis;
   const anList = AN ? AN.checklist.map(c=>`<li>${c.ok?"✅":"▫️"} <b>${esc(c.label)}</b>: ${esc(c.detail)}</li>`).join("") : "";

@@ -27,7 +27,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.9"
+VERSION = "19.10"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -412,6 +412,26 @@ def news_inputs(focus, manual=None):
     return out
 
 
+def history_sync(typ, now_dt):
+    """Ambil riwayat reaksi yang belum ada (tanggal FRED bila diaktifkan), simpan permanen, lalu ringkas.
+    Dipakai halaman NEWS dan cron supaya kuota data tidak terbuang dua kali."""
+    since = os.getenv("NEWS_HISTORY_FROM", "").strip()        # mis. 2007: tarik tanggal resmi dari FRED (butuh FRED_API_KEY)
+    if since.isdigit() and typ in news_dates.RELEASES:
+        news.set_extra_past(typ, news_dates.fred_dates(typ, int(since)))
+    dates = news.past_dates(typ, now_dt)
+    fam = news.TYPES[typ]["family"]
+    per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
+    stored = news_store.rows(typ)                             # hasil ukur yang sudah tersimpan permanen
+    prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min,
+                               skip=news_store.skip_dates(typ))
+    if prog.get("error"):
+        prog["error"] = data.scrub(prog["error"])
+    new_rows, bad_rows = news.collect_new_rows(typ, dates, stored)
+    news_store.put(typ, new_rows, list(prog.get("dead", [])) + bad_rows)
+    stored = {**stored, **new_rows}
+    return dates, prog, news.study(typ, dates, stored=stored)
+
+
 def news_view(ev_id=None, now=None, manual=None):
     """Susun data halaman NEWS: daftar berita, studi riwayat jenis berita terpilih, dan sinyal."""
     ts = now or pd.Timestamp.now(tz="UTC")
@@ -426,21 +446,7 @@ def news_view(ev_id=None, now=None, manual=None):
     h1 = states[("XAUUSD", "H1")]["signal"]
     nasdaq_h1 = states[("NASDAQ", "H1")]["signal"]
     typ = focus["type"]
-    since = os.getenv("NEWS_HISTORY_FROM", "").strip()        # mis. 2007: tarik tanggal resmi dari FRED (butuh FRED_API_KEY)
-    if since.isdigit() and typ in news_dates.RELEASES:
-        news.set_extra_past(typ, news_dates.fred_dates(typ, int(since)))
-    dates = news.past_dates(typ, ts.to_pydatetime())
-    fam = news.TYPES[typ]["family"]
-    per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
-    stored = news_store.rows(typ)                             # hasil ukur yang sudah tersimpan permanen
-    prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min,
-                               skip=news_store.skip_dates(typ))
-    if prog.get("error"):
-        prog["error"] = data.scrub(prog["error"])
-    new_rows, bad_rows = news.collect_new_rows(typ, dates, stored)
-    news_store.put(typ, new_rows, list(prog.get("dead", [])) + bad_rows)
-    stored = {**stored, **new_rows}
-    summ = news.study(typ, dates, stored=stored)
+    dates, prog, summ = history_sync(typ, ts.to_pydatetime())
     t0 = pd.Timestamp(focus["t0"])
     live = None if m5 is None else float(m5["close"].iloc[-1])
     usable_h1 = bool(h1) and not h1.get("market_closed")
@@ -475,8 +481,10 @@ def news_view(ev_id=None, now=None, manual=None):
         hi = None if pre is None or len(pre) < 6 else float(pre["high"].max())
         lo = None if pre is None or len(pre) < 6 else float(pre["low"].min())
         sig = news.pre_signal(summ, ctx, live, hi, lo, h1_score=h1_score, sur=sur)
-        if os.getenv("NEWS_PRE_DIRECTION", "").strip().lower() not in ("on", "1", "yes"):
-            sig = news.no_direction(sig)               # prediksi arah sebelum rilis dimatikan (tidak terbukti andal)
+        if os.getenv("NEWS_PRE_DIRECTION", "").strip().lower() in ("off", "0", "no"):
+            sig = news.no_direction(sig)               # prediksi arah pra-news dimatikan lewat env
+        elif os.getenv("NEWS_REQUIRE_ANALYSIS", "").strip().lower() not in ("off", "0", "no"):
+            sig = news_context.gate(sig, analysis, int(os.getenv("NEWS_MIN_ASPECTS", "") or news_context.MIN_ASPECTS))
         out_focus["signal"] = sig
     elif focus["status"] in ("RILIS", "PASCA"):
         bar = None if m5 is None else m5[m5["time"] == t0]
@@ -619,14 +627,11 @@ def cron_run(ts=None, click=None):
                     sent.append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
     extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
     evs = news.build_events(ts.to_pydatetime(), extra)
-    pre_min = int(os.getenv("NEWS_PRE_MIN", "30"))
+    pre_min = int(os.getenv("NEWS_PRE_MIN", "") or 60)
     off = notify.offset("XAUUSD")
     nxt = [e for e in evs if e["status"] == "PRA"][:1]
     if nxt and -nxt[0]["minutes"] <= 36 * 60:       # hangatkan riwayat sebelum rilis
-        typ = nxt[0]["type"]
-        per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
-        news.ensure_windows(news.TYPES[typ]["family"], news.past_dates(typ, ts.to_pydatetime()),
-                            lambda x, y: data.get_range("XAUUSD", "M5", x, y), per_minute=per_min)
+        history_sync(nxt[0]["type"], ts.to_pydatetime())
     for ev in evs:
         if ev["status"] not in ("PRA", "PASCA"):
             continue
@@ -637,7 +642,7 @@ def cron_run(ts=None, click=None):
             if notify.seen(k5 if stage == "5" else k30):
                 continue
             v = news_view(ev["id"], now=ts)["focus"]
-            if stage == "30" and v["progress"]["done"] < v["progress"]["total"] and left > 6:
+            if stage == "30" and v["study"].get("n", 0) < 3 and v["progress"]["done"] < v["progress"]["total"] and left > 6:
                 notes.append(f"{ev['short']}: riwayat belum lengkap ({v['progress']['done']}/{v['progress']['total']}), menunggu")
                 continue
             s = v["signal"]

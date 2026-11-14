@@ -94,7 +94,8 @@ def evaluate(row, m5, now):
     t0 = pd.Timestamp(row["issued"])
     sg = 1 if row["direction"] == "BUY" else -1
     has_levels = row.get("sl") is not None and row.get("tp1") is not None
-    horizon = t0 + pd.Timedelta(minutes=WINDOW_MIN if has_levels else QUICK_MIN)
+    base = pd.Timestamp(row["t0"]) if row.get("kind") == "PRA" and row.get("t0") else t0   # pra-news: masa tahan sampai 60 menit setelah rilis
+    horizon = base + pd.Timedelta(minutes=WINDOW_MIN if has_levels else QUICK_MIN)
     start = t0.ceil("5min")
     bars = pd.DataFrame()
     if m5 is not None and len(m5):
@@ -188,8 +189,9 @@ def refresh(m5, now=None):
     if changed:
         _save(rows)
     return {"entries": list(reversed(rows[-12:])), "stats": stats(rows),
-            "by_kind": {"BIAS": stats([r for r in rows if r.get("kind") == "BIAS"]),
-                        "ENTRY": stats([r for r in rows if r.get("kind") != "BIAS"])}}
+            "by_kind": {"PRA": stats([r for r in rows if r.get("kind") == "PRA"]),
+                        "BIAS": stats([r for r in rows if r.get("kind") == "BIAS"]),
+                        "ENTRY": stats([r for r in rows if r.get("kind") not in ("BIAS", "PRA")])}}
 
 
 def pending_wrong():
