@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.10 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.12 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,25 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.12: kalender hanya berita high-impact USD (berdampak ke XAUUSD)
+
+Sama dengan v19.11, ditambah filter mata uang: bawaan hanya USD (`NEWS_CAL_CURRENCIES`), hanya label High, dan label versi dinaikkan ke 19.12 agar mudah dibedakan.
+
+### Rincian kalender high-impact (`news_calendar.py`, sejak v19.11)
+
+Radar bawaan (FOMC, NFP, CPI AS, PPI, PCE) tidak diubah. Di tab NEWS ada kartu baru **"Kalender high-impact"** untuk berita berdampak tinggi (label High) yang berdampak ke XAUUSD: Retail Sales, ISM, GDP, klaim pengangguran, pidato/notulen Fed, dan seterusnya. **Bawaan: hanya mata uang USD**, karena emas dihargai dalam dolar AS; berita mata uang lain (mis. CPI Kanada) berdampak tidak langsung. Tambahkan lewat `NEWS_CAL_CURRENCIES` (mis. `USD,EUR,CNY` atau `ALL`).
+
+- **Sumber:** kalender Forex Factory (feed publik yang sudah dipakai radar), pekan ini + pekan depan, jam WIB. Tidak ada tanggal karangan; bila feed gagal, yang tampil radar bawaan + catatan manual + `CAL_EXTRA`.
+- **Malam ini (Senin 16 Nov 2026, 20:30 WIB = 13:30 UTC):** dengan bawaan USD saja, hanya NY Empire State yang tampil. CPI Kanada (CAD) tampil bila `NEWS_CAL_CURRENCIES=USD,CAD`. Catatan dari kalender HP Anda: 6 data CPI Kanada dan NY Empire State Manufacturing dari kalender HP Anda ada di `MANUAL_EVENTS` (dipakai hanya bila feed tidak punya berita untuk mata uang dan jam yang sama). Jadwal CPI Kanada dikonfirmasi Statistics Canada.
+- **Per berita:** hitung mundur, Perkiraan / Sebelumnya / Actual. Bila Actual belum terbaca dari feed (feed gratis sering belum memuatnya), **ketik di kolom Actual lalu Enter** untuk pembacaan kejutan.
+- **Pembacaan kejutan:** untuk berita USD, arah emas (angka lebih kuat dari perkiraan = dolar kuat = emas cenderung turun; pengangguran/klaim kebalikannya). Untuk mata uang lain hanya ditulis arah mata uang itu sendiri; dampak ke XAUUSD/NASDAQ tidak langsung, jadi tidak ada arah untuk emas. Ukuran kejutan memakai aturan praktis per jenis berita (bukan hasil riset).
+- **Tidak ada sinyal Entry/SL/TP dari lapisan ini.** Sinyal arah di radar bawaan bergantung pada riwayat reaksi harga per jenis berita; untuk berita baru ini riwayat itu tidak ada, jadi tidak dikarang.
+- **Peringatan "hindari entry baru"** (banner di tab XAUUSD/NASDAQ dan baris ⚠ di notifikasi ENTRY SIAP) mulai 30 menit sebelum sampai 15 menit sesudah berita high-impact USD (radar bawaan ikut dihitung). `NEWS_GUARD_BLOCK=1` menahan notifikasi ENTRY SIAP di jendela itu (bawaan: hanya peringatan).
+- **Notifikasi:** satu pesan per jam rilis (bukan satu per berita). USD: 60 dan 5 menit sebelum rilis; mata uang lain: 60 menit sebelum; pesan "angka keluar" hanya bila feed memuat Actual.
+- **Env baru:** `NEWS_CAL_CURRENCIES` (bawaan `USD`), `NEWS_CAL_IMPACT` (bawaan `high`; `high,medium` untuk menyertakan yang sedang), `NEWS_GUARD` (off), `NEWS_GUARD_BEFORE` (30), `NEWS_GUARD_AFTER` (15), `NEWS_GUARD_CURRENCIES` (bawaan `USD`; `ALL` atau daftar), `NEWS_GUARD_BLOCK`, `NEWS_CAL_NOTIFY` (bawaan `ALL`; `off` atau daftar mata uang), `NEWS_CAL_NEXTWEEK=off`, `CAL_EXTRA` (JSON berita tambahan). Uji: `tests/test_news_calendar.py`.
+
+Batasan jujur: lapisan ini hanya selengkap kalender Forex Factory (bukan seluruh dunia); pekan depan baru tersedia bila feed-nya terbit; judul berita tampil bahasa Inggris dari feed; aturan arah dicocokkan lewat kata kunci judul, jadi judul yang tidak dikenal hanya diberi angka tanpa arah. Belum diuji dengan feed asli dari server saya (jaringan terbatas): uji memakai baris sintetis bergaya Forex Factory, jadi pantau hari pertama.
 
 ## Yang baru di v19.10: sinyal arah pra-news menyala, 1 jam sebelum rilis
 

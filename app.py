@@ -18,6 +18,7 @@ from flask import Flask, Response, jsonify, request
 
 import data
 import news
+import news_calendar
 import news_context
 import news_dates
 import news_intelligence
@@ -27,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.10"
+VERSION = "19.12"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -273,7 +274,8 @@ def api_signal():
              "error": None, "last_attempt": native.get("updated_at")}
         s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                          "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
-                 symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True)
+                 symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True,
+                 news_guard=calendar_guard())
         return jsonify(s)
     if request.args.get("force") == "1":
         with lock:
@@ -291,7 +293,7 @@ def api_signal():
     s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                      "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
              symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
-             now=now().isoformat())
+             now=now().isoformat(), news_guard=calendar_guard())
     return jsonify(s)
 
 
@@ -384,6 +386,58 @@ def api_quote():
                    closed_price=None if cl is None else round(float(cl["close"]), 2),
                    closed_time=None if cl is None else cl["time"].isoformat(),
                    broker_utc_offset=boff, error=c["error"])
+
+
+# ------------------------------------------------ kalender high-impact semua mata uang (v19.11)
+def calendar_events(ts, curated=None, actual=None):
+    """Berita kalender (CPI Kanada, Retail Sales, ISM, suku bunga bank sentral, dst.). Tidak pernah melempar error.
+    Mengembalikan (berita kalender, berita bawaan)."""
+    curated = curated if curated is not None else news.build_events(
+        ts.to_pydatetime(), news.parse_extra(os.getenv("EXTRA_EVENTS", "")))
+    try:
+        rows = news_calendar._feed_all()
+    except Exception:  # noqa: BLE001
+        rows = None
+    cal = news_calendar.build(ts, rows, [e["t0"] for e in curated],
+                              news_calendar.parse_extra(os.getenv("CAL_EXTRA", "")), actual_overrides=actual)
+    return cal, curated
+
+
+def _curated_for_guard(curated):
+    return [{"t0": e["t0"], "short": e["short"], "currency": "USD", "impact": "high"} for e in curated]
+
+
+def calendar_payload(ts, curated=None, actual=None):
+    try:
+        cal, cur = calendar_events(ts, curated, actual)
+        st = news.feed_status()
+        cc = news_calendar.currencies()
+        return {"events": cal, "impact": sorted(news_calendar.impacts()), "currencies": "ALL" if cc is None else sorted(cc),
+                "feed": {"ok": st["ok"], "error": st["error"]},
+                "guard": news_calendar.guard(ts, cal, _curated_for_guard(cur))}
+    except Exception as e:  # noqa: BLE001  kalender tambahan tidak boleh merusak halaman
+        return {"events": [], "impact": [], "feed": {"ok": False, "error": type(e).__name__}, "guard": []}
+
+
+_guard_cache = {"at": 0.0, "v": []}
+
+
+def calendar_guard(ts=None):
+    """Peringatan 'hindari entry baru' di sekitar berita high-impact (di-cache 20 detik)."""
+    if time.time() - _guard_cache["at"] < 20:
+        return _guard_cache["v"]
+    ts = ts or pd.Timestamp.now(tz="UTC")
+    try:
+        cal, curated = calendar_events(ts)
+        v = news_calendar.guard(ts, cal, _curated_for_guard(curated))
+    except Exception:  # noqa: BLE001
+        v = []
+    _guard_cache.update(at=time.time(), v=v)
+    return v
+
+
+def _guard_block():
+    return os.getenv("NEWS_GUARD_BLOCK", "").strip().lower() in ("1", "on", "yes")
 
 
 def news_inputs(focus, manual=None):
@@ -517,7 +571,15 @@ def api_news_events():
 def api_news():
     try:
         manual = {k: (request.args.get(q) or "").strip()[:12] for k, q in (("forecast", "f"), ("previous", "p"), ("actual", "a"))}
-        return jsonify(news_view(request.args.get("id"), manual=manual))
+        cal_actual = {}
+        for item in request.args.getlist("ca")[:30]:                 # "ID:nilai" = Actual yang diketik manual
+            k, _, v = item.partition(":")
+            if k.startswith("CAL") and v.strip():
+                cal_actual[k[:16]] = v.strip()[:12]
+        out = news_view(request.args.get("id"), manual=manual)
+        ts = pd.Timestamp.now(tz="UTC")
+        out["calendar"] = calendar_payload(ts, news.build_events(ts.to_pydatetime(), news.parse_extra(os.getenv("EXTRA_EVENTS", ""))), cal_actual)
+        return jsonify(out)
     except Exception as e:  # noqa: BLE001
         return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
 
@@ -620,8 +682,12 @@ def cron_run(ts=None, click=None):
         ck = f"cfm:{sym}:{tf}:{a['time']}" if a else None
         if a and not sig.get("market_closed") and not notify.seen(ck):
             c = compute_confirm(sym, tf, a)
-            if c and c.get("state") == "CONFIRMED":
-                title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym))
+            g = calendar_guard(ts) if c and c.get("state") == "CONFIRMED" else []
+            if c and c.get("state") == "CONFIRMED" and g and _guard_block():
+                notes.append(f"{sym}:{tf} ENTRY SIAP ditahan: {g[0]['text'][:80]}")
+            elif c and c.get("state") == "CONFIRMED":
+                title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym),
+                                                    warn=g[0]["text"] if g else None)
                 r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], click)
                 if r is not None:
                     sent.append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
@@ -672,6 +738,16 @@ def cron_run(ts=None, click=None):
                 r = notify.deliver(key, title, msg, 5, ["rotating_light"], click)
                 if r is not None:
                     sent.append({"jenis": "news_pasca", "target": ev["id"], "hasil": r})
+    try:                                              # kalender high-impact semua mata uang (v19.11)
+        cal, _ = calendar_events(ts, evs)
+        for key, kind, slot, mins in news_calendar.due_alerts(ts, news_calendar.slots(cal), pre_min):
+            title, msg = news_calendar.post_message(slot) if kind == "pasca" else news_calendar.pre_message(slot, mins)
+            usd = any(e["currency"] == "USD" for e in slot["events"])
+            r = notify.deliver(key, title, msg, 4 if usd else 3, ["bell"], click)
+            if r is not None:
+                sent.append({"jenis": f"kalender_{kind}", "target": slot["slot"], "hasil": r})
+    except Exception as e:  # noqa: BLE001
+        notes.append(f"kalender high-impact: {type(e).__name__}")
     try:                                              # kabari bila sinyal news yang pernah terbit ternyata SALAH
         news_log.refresh(raw.get(("XAUUSD", "M5")), ts)
         for row in news_log.pending_wrong():
@@ -941,8 +1017,11 @@ def mt5_ingest(j):
             _mt5["cfm_state"][(sym, tf)] = st_key
             _mt5["cfm"][(sym, tf)] = {**c, "_read": time.time()}
             notify.kv_set(f"mt5cfm:{sym}:{tf}", json.dumps(c), ttl=6 * 3600)
-        if c.get("state") == "CONFIRMED" and not notify.seen(ck):
-            title, msg = notify.confirm_message(sig["label"], tf, a, c, 0.0)
+        g = calendar_guard() if c.get("state") == "CONFIRMED" and not notify.seen(ck) else []
+        if c.get("state") == "CONFIRMED" and not notify.seen(ck) and g and _guard_block():
+            pass                                          # NEWS_GUARD_BLOCK=1: tahan notifikasi entry di sekitar berita
+        elif c.get("state") == "CONFIRMED" and not notify.seen(ck):
+            title, msg = notify.confirm_message(sig["label"], tf, a, c, 0.0, warn=g[0]["text"] if g else None)
             r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], app_url())
             if r is not None:
                 out["sent"].append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})

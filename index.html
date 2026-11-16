@@ -91,6 +91,12 @@ body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard,
 .ev.sel{color:var(--text);border-color:#4a5688;background:#171c35}.ev small{display:block;font-weight:500;color:var(--mute)}
 .ev.PASCA,.ev.RILIS{border-color:#6b5a1f}.ev.SELESAI{opacity:.6}
 .cd{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin:6px 0}
+.guard{border:1px solid #6b5a1f;background:#2a2415;color:#f6c453;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.5}
+.calday{margin:14px 0 4px;font-weight:700;font-size:13px;color:var(--text)}
+.calslot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0 2px;padding-top:8px;border-top:1px dashed var(--line)}
+.calrow{display:flex;gap:10px;padding:6px 0}.calrow .cur{flex:0 0 38px;font-weight:700;font-size:12px;color:var(--mute);padding-top:2px}
+.calrow .cb{flex:1;min-width:0}.calrow small{color:var(--mute);font-weight:500}.calrow .rd{margin-top:2px}
+.cain{width:78px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font:600 13px var(--font)}
 .pill{display:inline-block;font-size:12px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mute)}
 .pill.PRA{color:#7aa2ff;border-color:#35508f}.pill.RILIS{color:var(--sell);border-color:#6b2a2a}.pill.PASCA{color:var(--wait);border-color:#6b5a1f}
 .sigbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px}
@@ -130,6 +136,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   </div>
   </div>
   <div id="err" class="card error" hidden></div>
+  <div id="newsguard" class="guard" hidden></div>
   <section id="newsview"></section>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
@@ -173,7 +180,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.10 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.12 NEWS · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -219,8 +226,14 @@ function chartSVG(sig){
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Grafik harga penutupan H1, 48 candle terakhir">${g}</svg>`;
 }
 
+function showGuard(list){
+  const g = $("newsguard"); if(!g) return;
+  const t = (list||[]).map(x=>x.text);
+  g.hidden = !t.length || cur==="NEWS"; g.textContent = "⚠ " + t.join(" ⚠ ");
+}
 function render(s){
   const sig = s.signal;
+  showGuard(s.news_guard);
   $("err").hidden = !s.error;
   if(s.error) $("err").textContent = "Data belum bisa diambil: " + s.error + (sig ? " (menampilkan sinyal terakhir yang berhasil)" : "");
   if(!sig){ $("loading").textContent = s.error ? "Belum ada data. Aplikasi mencoba lagi otomatis." : "Server baru bangun, mengambil data pasar (sekitar 1 menit)…"; return; }
@@ -510,6 +523,34 @@ const HOW = `<details class="how"><summary>Cara membaca angka berita (seperti di
   <li>Contoh dari video referensi: Core CPI 0,3% (Forecast 0,2%) membuat emas turun sekitar 600 pip. Itu satu contoh, bukan jaminan.</li>
   <li>Sebelum rilis, Forecast dan Previous terisi otomatis dari Forex Factory bila terbaca. <b>Actual</b> ketik sendiri tepat setelah rilis (feed gratis tidak memuatnya), lalu tekan Hitung.</li></ol></details>`;
 
+const CALACT = () => { try{ return JSON.parse(ls("calact")||"{}") || {}; }catch(e){ return {}; } };
+function calCardHtml(c){
+  if(!c) return "";
+  const evs = c.events || [], act = CALACT();
+  const gd = (c.guard||[]).map(g=>`<div class="guard" style="margin-bottom:8px">⚠ ${esc(g.text)}</div>`).join("");
+  const feedWarn = c.feed && !c.feed.ok ? `<p class="note">Kalender Forex Factory belum terbaca (${esc(c.feed.error||"tidak ada respons")}). Yang tampil: radar bawaan dan catatan manual.</p>` : "";
+  if(!evs.length) return `<section class="card" id="calcard"><h2>Kalender high-impact · XAUUSD</h2>${gd}${feedWarn}<p class="note">Tidak ada berita high-impact dalam 8 hari ke depan.</p></section>`;
+  const dk = iso => new Date(iso).toLocaleDateString("id-ID",{...WIB,weekday:"long",day:"numeric",month:"short"});
+  const today = dk(new Date().toISOString()), tom = dk(new Date(Date.now()+864e5).toISOString());
+  let html = "", lastDay = "", lastSlot = "";
+  evs.forEach(e=>{
+    const d = dk(e.t0);
+    if(d !== lastDay){ html += `<div class="calday">${d===today?"Hari ini · ":d===tom?"Besok · ":""}${esc(d)}</div>`; lastDay = d; lastSlot = ""; }
+    if(e.slot !== lastSlot){ html += `<div class="calslot"><b>${esc(wibShort(e.slot).split(" ").pop())} WIB</b><span class="pill ${e.status}">${STATUS[e.status]}</span><small data-cd="${esc(e.slot)}">${esc(countdownText(e.slot))}</small></div>`; lastSlot = e.slot; }
+    const r = e.reading || {}, typed = act[e.id] || "";
+    const canType = e.sign != null && e.forecast && !e.actual;
+    const inp = canType ? `<input class="cain" data-id="${esc(e.id)}" value="${esc(typed)}" inputmode="decimal" autocomplete="off" placeholder="Actual" aria-label="Actual ${esc(e.title)}">` : "";
+    const lean = r.gold ? `<b class="${r.gold}">Emas: ${r.gold}</b> · ` : "";
+    html += `<div class="calrow"><span class="cur">${esc(e.currency)}</span><div class="cb"><b>${esc(e.title)}</b> <small>${esc(e.category)}${e.impact!=="high"?" · sedang":""}${e.source==="feed"?"":" · "+esc(e.source)}${e.relevance==="langsung"?"":" · dampak tidak langsung"}</small>
+      <div><small>Perkiraan ${esc(e.forecast||"–")} · Sebelumnya ${esc(e.previous||"–")} · Actual ${e.actual?`<b style="color:var(--text)">${esc(e.actual)}</b>`:(inp||"–")}</small></div>
+      ${r.text?`<div class="rd"><small>${lean}${esc(r.text)}</small></div>`:""}</div></div>`;
+  });
+  return `<section class="card" id="calcard"><h2>Kalender high-impact · ${c.currencies==="ALL"?"semua mata uang":esc((c.currencies||["USD"]).join("/"))+" (berdampak ke XAUUSD)"}</h2>${gd}${feedWarn}
+    <p class="note">Dari kalender Forex Factory (pekan ini dan pekan depan), jam WIB. Berita USD yang sama dengan radar di atas (NFP, CPI AS, FOMC, dst.) tidak diulang. Bila Actual belum terbaca otomatis, ketik di kolom Actual (tekan Enter) untuk melihat pembacaan kejutan.</p>${html}
+    <p class="note" style="margin-top:10px">Lapisan ini <b>tidak memberi sinyal Entry/SL/TP</b>: untuk berita-berita ini belum ada riwayat reaksi harga di aplikasi. Isinya: hitung mundur, angka, pembacaan kejutan, notifikasi, dan peringatan "hindari entry baru" di sekitar jam rilis. Arah untuk emas hanya untuk berita USD. Berita mata uang lain tidak ditampilkan karena dampaknya ke emas tidak langsung (tambahkan lewat NEWS_CAL_CURRENCIES).</p></section>`;
+}
+setInterval(()=>{ document.querySelectorAll("[data-cd]").forEach(e=>{ e.textContent = countdownText(e.dataset.cd); }); }, 1000);
+
 function renderNews(j){
   const v = $("newsview");
   if(!j.focus){ v.innerHTML = `<div class="card error">${esc(j.error||"Data berita belum tersedia.")}</div>`; return; }
@@ -579,6 +620,7 @@ function renderNews(j){
     <p class="note">Bias ini informatif dan dicatat di riwayat untuk diukur akurasinya. Sinyal entry hanya keluar bila minimal 3 aspek terkumpul dan analisis lengkap tidak berlawanan kuat. Bukan saran investasi.</p></section>` : "";
   v.innerHTML = `
     <div class="evs">${evs}</div>
+    ${calCardHtml(j.calendar)}
     <section class="card">
       <div class="top"><div><h1 style="font-size:19px">${esc(f.label)}</h1><div class="sub">${esc(wibFull(f.t0))}<br>${esc(utcTxt(f.t0))}${f.confirmed?"":" · tanggal perkiraan"}</div></div><span class="pill ${f.status}">${STATUS[f.status]}</span></div>
       <div class="cd" id="cd" data-t0="${esc(f.t0)}">${esc(countdownText(f.t0))}</div>
@@ -593,9 +635,16 @@ function renderNews(j){
     ${logCard}
     <section class="card"><h2>Riwayat reaksi XAUUSD pada berita ini</h2>${prog}${stats || (prog?"":'<p class="note">Belum ada data riwayat.</p>')}</section>
     <section class="card">${HOW}</section>
-    <p class="note">Jadwal: Federal Reserve (FOMC), BLS (NFP, CPI, PPI), BEA (PCE). Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
+    <p class="note">Jadwal radar: Federal Reserve (FOMC), BLS (NFP, CPI, PPI), BEA (PCE). Kalender high-impact: Forex Factory. Tanda ≈ = tanggal perkiraan. Harga: ${esc(j.source||"–")}.
       Sinyal XAUUSD lama tetap dihitung dari tren H1, riwayat reaksi, angka berita, dan reaksi harga. Panel lintas instrumen adalah konteks tambahan NEWS. Itu kecenderungan, bukan prediksi. Rilis berita adalah momen paling berisiko: spread melebar, slippage besar. Uji di akun demo dulu.</p>`;
   v.querySelectorAll(".ev").forEach(b=>b.addEventListener("click",()=>{ newsId = b.dataset.id; loadNews(); }));
+  v.querySelectorAll(".cain").forEach(i=>i.addEventListener("keydown",ev=>{
+    if(ev.key!=="Enter") return;
+    const m = CALACT(), val = i.value.trim();
+    if(val) m[i.dataset.id] = val; else delete m[i.dataset.id];
+    ls("calact", Object.keys(m).length ? JSON.stringify(m) : "");
+    i.blur(); loadNews(true);
+  }));
   const nb = $("nbtn");
   if(nb) nb.addEventListener("click",()=>{
     ls("nw_"+f.id, JSON.stringify({forecast:$("nf").value.trim(), previous:$("np").value.trim(), actual:$("na").value.trim()}));
@@ -606,13 +655,14 @@ function renderNews(j){
 async function loadNews(force){
   const my = seq;
   const ae = document.activeElement;
-  if(!force && ae && ae.closest && ae.closest("#numcard")) return;      // jangan ganggu saat mengetik angka
+  if(!force && ae && ae.closest && (ae.closest("#numcard") || ae.closest("#calcard"))) return;      // jangan ganggu saat mengetik angka
   try{
     const key = newsId || (newsData && newsData.focus && newsData.focus.id);
     const m = key ? NW(key) : {};
     const q = new URLSearchParams();
     if(newsId) q.set("id", newsId);
     if(m.forecast) q.set("f", m.forecast); if(m.previous) q.set("p", m.previous); if(m.actual) q.set("a", m.actual);
+    const ca = CALACT(); Object.keys(ca).slice(0,30).forEach(k=>q.append("ca", k+":"+ca[k]));
     const r = await fetch("/api/news"+(q.toString()?"?"+q.toString():""),{cache:"no-store"}); const j = await r.json();
     if(my!==seq || cur!=="NEWS") return;
     newsData = j; $("err").hidden = true; renderNews(j);
