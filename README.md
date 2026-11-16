@@ -7,6 +7,17 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
+## Tambahan: setup Fib Retracement (sesuai pengaturan TradingView Anda)
+
+Blok `fib` baru di setiap hasil analisis (`fib_setup.py`) dan kartu **Setup Fib Retracement** di tab XAUUSD/NASDAQ. Level persis seperti layar pengaturan Anda: **-0.99, -0.66, -0.33, 0.03, 0.63, 0.78, 0.99** (0.786 dan 2.618 tidak dicentang, jadi tidak dipakai).
+
+- **Cara menggambar** sama dengan TradingView: level 0 di ujung kaki ayunan, level 1 di awal kaki, level negatif = perpanjangan. Diperiksa terhadap angka di screenshot Anda (0.63 = 3878.96, 0.78 = 3868.48, -0.99 = 3992.14).
+- **Kaki naik (low -> high) = setup BUY; kaki turun = SELL (cerminan).** Entry limit di 0.78, zona 0.63-0.78, SL di 0.99, TP1/TP2/TP3 di 0.03 / -0.33 / -0.66, dan -0.99 sebagai target perpanjangan.
+- **Status:** MENUNGGU PULLBACK, DI ZONA ENTRY, LEWAT ENTRY (dekat SL), SETUP BATAL (lewat 0.99), SUDAH LEWAT (jangan kejar), BELUM ADA KAKI FIB.
+- **Tidak mengubah sinyal utama.** Bila arah Fib berlawanan dengan sinyal 3-keluarga strategi, muncul peringatan; bila searah dan harga di zona, ditambah satu alasan di daftar alasan.
+- **Env (semua opsional):** `FIB_ENABLED`, `FIB_ZONE` (0.63,0.78), `FIB_ENTRY` (0.78), `FIB_SL` (0.99), `FIB_SL_BUFFER_ATR` (0), `FIB_TP` (0.03,-0.33,-0.66), `FIB_PIVOT` (3 candle kiri/kanan), `FIB_MIN_ATR` (kaki minimal 3x ATR), `FIB_MAX_AGE_BARS` (80).
+- **Asumsi yang perlu Anda cek:** pemetaan TP1-TP3 dan entry di 0.78 saya ambil dari gambar posisi di TradingView Anda; kaki ayunan dipilih otomatis lewat pivot, jadi bisa berbeda dari kaki yang Anda gambar manual. Belum ada backtest bahwa setup ini menguntungkan. Uji: `tests/test_fib.py`.
+
 ## Yang baru di v19.13: Retail Sales jadi berita penuh (dengan sinyal Entry/SL/TP)
 
 Retail Sales AS (Advance Monthly Retail Trade, U.S. Census Bureau, 08:30 ET) kini berdiri sejajar dengan CPI, PPI, NFP, PCE, dan FOMC di radar NEWS: jadwal resmi, riwayat reaksi emas, pembacaan kejutan angka (Core Retail Sales dulu, lalu Retail Sales), analisis lengkap, sinyal pra-rilis (1 jam sebelum) dan pasca-rilis dengan Entry/SL/TP, Riwayat sinyal news, dan notifikasi.

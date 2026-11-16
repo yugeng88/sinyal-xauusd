@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 import data as D
+import fib_setup
 
 ATR_MULT = float(os.getenv("ATR_MULT", "1.5"))     # jarak SL = ATR14 x ini
 RR_LEVELS = (2.0, 3.0, 4.0)                         # TP1, TP2, TP3
@@ -391,6 +392,17 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
 
     levels = make_levels(direction, price, atr_v, symbol, struct) if direction != "WAIT" else None
 
+    # Setup Fib Retracement pengguna (blok tambahan; tidak mengubah arah/level sinyal utama).
+    fib = fib_setup.compute(df, atr_v, live_price, direction)
+    if fib.get("status") in ("IN_ZONE", "WAIT_PULLBACK", "DEEP") and not market_closed:
+        fd = fib["direction"]
+        if direction in ("BUY", "SELL") and direction != fd:
+            warnings.append(f"Setup Fib mengarah {fd} (kaki {fib['leg']['type']}), berlawanan dengan sinyal utama "
+                            f"{direction}. Jangan campur dua arah; tunggu salah satu batal.")
+        elif fib["status"] == "IN_ZONE":
+            reasons.append(f"Fib: harga di zona entry {fd} ({fib['zone']['from']:,.2f} - {fib['zone']['to']:,.2f}), "
+                           f"SL {fib['stop_loss']:,.2f}, TP1 {fib['tp'][0]:,.2f}.")
+
     tail = df.tail(chart_bars)
     return {
         "symbol": symbol,
@@ -415,6 +427,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
             "change_24h_pct": None if chg is None else round(chg, 2),
         },
         "levels": levels,
+        "fib": fib,
         "reasons": reasons,
         "warnings": warnings,
         "chart": [{"t": t.isoformat(), "c": round(float(x), 2)}
