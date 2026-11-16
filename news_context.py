@@ -28,6 +28,7 @@ QUERIES = {
     "FOMC": "Fed FOMC interest rate decision",
     "FOMC_PC": "Fed FOMC press conference Warsh",
     "PCE": "US PCE inflation Federal Reserve",
+    "RETAIL": "US retail sales report consumer spending",
 }
 COMMON_Q = "gold price dollar yields"
 HL_TTL, HL_RETRY, HL_TIMEOUT = 600, 60, 3.0

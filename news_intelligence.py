@@ -19,9 +19,9 @@ def market_impact(event_type, surprise, trends=None):
     if actual_ready and event_type in {"CPI", "PPI", "PCE", "FOMC"}:
         bias_nasdaq = bias_gold
         nasdaq_note = "Kejutan inflasi/suku bunga; bias makro searah tekanan yield dan USD."
-    elif actual_ready and event_type == "NFP":
+    elif actual_ready and event_type in {"NFP", "RETAIL"}:
         bias_nasdaq = "MIXED"
-        nasdaq_note = "NFP dapat menguatkan prospek pertumbuhan sekaligus menaikkan yield; perlu konfirmasi harga."
+        nasdaq_note = "Data pekerjaan/konsumsi kuat dapat menguatkan prospek pertumbuhan sekaligus menaikkan yield; perlu konfirmasi harga."
     else:
         bias_nasdaq = None
         nasdaq_note = "Belum ada kejutan Actual yang dapat dinilai."

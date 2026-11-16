@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.12 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.13 NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,16 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.13: Retail Sales jadi berita penuh (dengan sinyal Entry/SL/TP)
+
+Retail Sales AS (Advance Monthly Retail Trade, U.S. Census Bureau, 08:30 ET) kini berdiri sejajar dengan CPI, PPI, NFP, PCE, dan FOMC di radar NEWS: jadwal resmi, riwayat reaksi emas, pembacaan kejutan angka (Core Retail Sales dulu, lalu Retail Sales), analisis lengkap, sinyal pra-rilis (1 jam sebelum) dan pasca-rilis dengan Entry/SL/TP, Riwayat sinyal news, dan notifikasi.
+
+- **Jadwal 2026 dari rilis resmi Census.** Jadwal sempat bergeser akibat penutupan pemerintah akhir 2025, jadi tanggal yang dipakai adalah tanggal rilis SEBENARNYA: 14 Jan, 10 Feb, 6 Mar, 1 Apr, 21 Apr, 14 Mei, 17 Jun, 16 Jul, 14 Ags, 16 Sep, 15 Okt. Mendatang: 17 Nov, 16 Des 2026; 15 Jan, 17 Feb, 16 Mar, 16 Apr, 14 Mei, 16 Jun, 16 Jul 2027. Census baru menerbitkan sampai Jul 2027: Agu-Des 2027 tambahkan di `news.py` (`SCHEDULE["RETAIL"]`) atau lewat `EXTRA_EVENTS` setelah terbit.
+- **Riwayat reaksi:** 11 rilis 2026 yang sudah lewat dipelajari (di atas minimum 6). Sampel kecil: bukti statistik tetap lemah, dan hanya 2026 yang ada di jadwal (FRED tidak dipakai untuk Retail Sales).
+- **Kejutan angka:** unit 0,3 poin persen (aturan praktis, bisa diubah di `SURPRISE_CFG`). Angka di atas perkiraan = dolar kuat = emas cenderung turun. NASDAQ diperlakukan ambigu (MIXED), seperti NFP.
+- **Kalender high-impact:** baris Retail Sales dan Core Retail Sales dari Forex Factory tidak lagi diulang di kartu kalender karena sudah ada di radar.
+- Uji: `tests/test_retail.py`. Sama seperti berita lain, sinyal ini kecenderungan dari data, bukan prediksi atau jaminan; belum ada bukti dari data pasar nyata bahwa sinyal Retail Sales menguntungkan.
 
 ## Yang baru di v19.12: kalender hanya berita high-impact USD (berdampak ke XAUUSD)
 

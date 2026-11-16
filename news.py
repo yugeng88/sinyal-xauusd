@@ -47,6 +47,7 @@ TYPES = {
     "CPI":     {"label": "CPI (inflasi)",              "short": "CPI",        "et": (8, 30),  "family": "CPI"},
     "PPI":     {"label": "PPI (harga produsen)",       "short": "PPI",        "et": (8, 30),  "family": "PPI"},
     "PCE":     {"label": "PCE (Personal Income & Outlays)", "short": "PCE",   "et": (8, 30),  "family": "PCE"},
+    "RETAIL":  {"label": "Retail Sales (penjualan ritel AS)", "short": "Retail", "et": (8, 30), "family": "RETAIL"},
 }
 
 # Tanggal rilis (waktu AS). Sumber: Federal Reserve (kalender FOMC), BLS (jadwal rilis 2026 dan 2027),
@@ -75,6 +76,12 @@ SCHEDULE = {
              "2027-03-31", "2027-05-27", "2027-08-25", "2027-09-30", "2027-10-28", "2027-11-24", "2027-12-22"],
 }
 ESTIMATED = set()          # PCE 25 Nov dan 23 Des 2026 sudah dikonfirmasi BEA
+# Retail Sales: Advance Monthly Retail Trade (U.S. Census Bureau), 08:30 ET. Tanggal 2026 sampai 15 Okt adalah tanggal RILIS SEBENARNYA
+# (jadwal sempat bergeser akibat penutupan pemerintah akhir 2025); 17 Nov 2026 dan seterusnya dari jadwal resmi Census (diperiksa 16 Nov 2026).
+# Census baru menerbitkan jadwal sampai Jul 2027. Agu-Des 2027 belum ada: tambahkan di sini (atau lewat EXTRA_EVENTS) setelah terbit.
+SCHEDULE["RETAIL"] = ["2026-01-14", "2026-02-10", "2026-03-06", "2026-04-01", "2026-04-21", "2026-05-14", "2026-06-17",
+                      "2026-07-16", "2026-08-14", "2026-09-16", "2026-10-15", "2026-11-17", "2026-12-16",
+                      "2027-01-15", "2027-02-17", "2027-03-16", "2027-04-16", "2027-05-14", "2027-06-16", "2027-07-16"]
 SCHEDULE["FOMC_PC"] = SCHEDULE["FOMC"]
 
 
@@ -277,6 +284,7 @@ SURPRISE_CFG = {
     "PPI":  {"metric": "Core PPI m/m", "feed": ["Core PPI m/m", "PPI m/m"], "unit": 0.1},
     "PCE":  {"metric": "Core PCE Price Index m/m", "feed": ["Core PCE Price Index m/m", "PCE Price Index m/m"], "unit": 0.1},
     "NFP":  {"metric": "Non-Farm Employment Change", "feed": ["Non-Farm Employment Change"], "unit": 50000.0},
+    "RETAIL": {"metric": "Core Retail Sales m/m", "feed": ["Core Retail Sales m/m", "Retail Sales m/m"], "unit": 0.3},
     "FOMC": {"metric": "Federal Funds Rate", "feed": ["Federal Funds Rate"], "unit": 0.25},
 }
 W_TREND, W_HIST, W_FCST = 0.40, 0.35, 0.25     # bobot sinyal SEBELUM rilis
