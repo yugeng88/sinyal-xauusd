@@ -330,3 +330,18 @@ def renew_message(label, tf, r, a, off=0.0):
             f"Entry lama {fp(r['entry'], off)} → harga {fp(r['exit_price'], off)} ({pts:+.2f} poin)\n"
             f"Level baru: SL {fp(lv['stop_loss'], off)} | {tps}\n"
             "Posisi boleh ditahan dengan SL/TP baru, atau tutup bila ingin aman. Bukan saran investasi.")
+
+
+def fib_message(label, tf, fs, off=0.0, invalid=False):
+    """Notifikasi setup Fib: harga masuk zona entry, atau setup batal setelah sempat masuk zona."""
+    d, lg = fs["direction"], fs["leg"]
+    if invalid:
+        return (f"{label} {tf} · FIB {d} BATAL",
+                f"Harga melewati level 0.99 ({fp(fs['stop_loss'], off)}). Setup Fib {d} (tarik {lg['draw']}) tidak berlaku lagi.\n"
+                "Jangan menambah posisi; tunggu garis Fib baru. Bukan saran investasi.")
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(fs["tp"]))
+    rr = "/".join(f"{x:g}" for x in fs["rr"] if x is not None)
+    return (f"{label} {tf} · FIB {d} DI ZONA ENTRY",
+            f"Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {lg['draw']}: {fp(lg['start'], off)} -> {fp(lg['end'], off)})\n"
+            f"Entry limit {fp(fs['entry'], off)} | SL {fp(fs['stop_loss'], off)} | risiko {fs['risk_points']:.2f}\n{tps} (RR 1:{rr})\n"
+            "Tunggu candle konfirmasi; jika SL kena, hitung dulu risikonya terhadap saldo. Bukan saran investasi.")

@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.13 NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.15 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,7 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Tambahan: setup Fib Retracement (sesuai pengaturan TradingView Anda)
+## Yang baru di v19.14-19.15: setup Fib Retracement (sesuai pengaturan TradingView Anda)
 
 Blok `fib` baru di setiap hasil analisis (`fib_setup.py`) dan kartu **Setup Fib Retracement** di tab XAUUSD/NASDAQ. Level persis seperti layar pengaturan Anda: **-0.99, -0.66, -0.33, 0.03, 0.63, 0.78, 0.99** (0.786 dan 2.618 tidak dicentang, jadi tidak dipakai).
 
@@ -17,6 +17,10 @@ Blok `fib` baru di setiap hasil analisis (`fib_setup.py`) dan kartu **Setup Fib 
 - **Tidak mengubah sinyal utama.** Bila arah Fib berlawanan dengan sinyal 3-keluarga strategi, muncul peringatan; bila searah dan harga di zona, ditambah satu alasan di daftar alasan.
 - **Env (semua opsional):** `FIB_ENABLED`, `FIB_ZONE` (0.63,0.78), `FIB_ENTRY` (0.78), `FIB_SL` (0.99), `FIB_SL_BUFFER_ATR` (0), `FIB_TP` (0.03,-0.33,-0.66), `FIB_PIVOT` (10 candle kiri/kanan, supaya yang dipilih struktur besar seperti LL/LH, bukan riak kecil), `FIB_MIN_ATR` (kaki minimal 3x ATR), `FIB_MAX_AGE_BARS` (80).
 - **Asumsi yang perlu Anda cek:** pemetaan TP1-TP3 dan entry di 0.78 saya ambil dari gambar posisi di TradingView Anda; kaki ayunan dipilih otomatis lewat pivot, jadi bisa berbeda dari kaki yang Anda gambar manual. Belum ada backtest bahwa setup ini menguntungkan. Uji: `tests/test_fib.py`.
+
+### Notifikasi Fib (EA MT5 tidak diubah)
+
+- **Notifikasi:** pesan "FIB BUY/SELL DI ZONA ENTRY" (zona, entry limit, SL, TP, RR) sekali per pasangan titik jangkar dan arah, dan "FIB ... BATAL" bila harga melewati 0.99 setelah zona sempat diberitahukan. Hanya dari data segar dan pasar buka. Env: `FIB_NOTIFY` (1/off), `FIB_NOTIFY_TFS` (M15,M30,H1).
 
 ## Yang baru di v19.13: Retail Sales jadi berita penuh (dengan sinyal Entry/SL/TP)
 

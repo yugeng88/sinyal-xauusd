@@ -28,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.13"
+VERSION = "19.15"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -200,12 +200,48 @@ def maybe_notify_exit(sym, tf, sig, click=None):
                 _sent_log.append({"jenis": "melemah", "target": f"{sym}:{tf}", "hasil": res})
 
 
+def maybe_notify_fib(sym, tf, sig, click=None):
+    """Notifikasi Fib: sekali per pasangan titik jangkar dan arah, saat harga masuk zona entry;
+    lalu sekali lagi bila setup batal setelah zona sempat diberitahukan."""
+    if os.getenv("FIB_NOTIFY", "1").lower() in ("0", "off", "false", "no"):
+        return
+    tfs = [x.strip().upper() for x in os.getenv("FIB_NOTIFY_TFS", "M15,M30,H1").split(",")]
+    f = sig.get("fib") or {}
+    if tf not in tfs or not f.get("direction") or sig.get("market_closed"):
+        return
+    try:
+        age = pd.Timestamp.now(tz="UTC") - pd.Timestamp(sig["candle_time"])
+        if age > pd.Timedelta(minutes=3 * tf_minutes(tf) + 5):
+            return                                      # data basi: jangan kirim kabar lama
+    except (KeyError, ValueError):
+        return
+    off = 0.0 if sig.get("broker_native") else notify.offset(sym)
+    for fs in (f, f.get("alt") or {}):
+        if not fs.get("direction"):
+            continue
+        base = f"fib:{sym}:{tf}:{fs['direction']}:{fs['leg']['start_time']}:{fs['leg']['end_time']}"
+        if fs["status"] == "IN_ZONE":
+            title, msg = notify.fib_message(sig["label"], tf, fs, off)
+            r = notify.deliver(base + ":zone", title, msg, 4, ["triangular_ruler"], click or app_url())
+        elif fs["status"] == "INVALID" and notify.seen(base + ":zone"):
+            title, msg = notify.fib_message(sig["label"], tf, fs, off, invalid=True)
+            r = notify.deliver(base + ":inv", title, msg, 4, ["warning"], click or app_url())
+        else:
+            continue
+        if r is not None:
+            _sent_log.append({"jenis": "fib", "target": f"{sym}:{tf}", "hasil": r})
+
+
 def maybe_notify_signal(sym, tf, sig, click=None):
     """Notifikasi sinyal baru: sekali per sinyal, hanya bila masih segar dan pasar buka.
     Juga memeriksa notifikasi KELUAR / MELEMAH untuk sinyal sebelumnya."""
     try:
         maybe_notify_exit(sym, tf, sig, click)
     except Exception:  # noqa: BLE001  - kabar keluar tidak boleh menggagalkan sinyal baru
+        pass
+    try:
+        maybe_notify_fib(sym, tf, sig, click)
+    except Exception:  # noqa: BLE001  - kabar Fib tidak boleh menggagalkan sinyal baru
         pass
     if REQUIRE_M1 and not SETUP_ALERT:
         return None                                    # v18: entry baru diumumkan setelah M1 terkonfirmasi (cron/MT5)
