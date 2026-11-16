@@ -111,6 +111,13 @@ body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard,
 .fac{list-style:none;padding:0;margin:8px 0 0;font-size:12.5px;line-height:1.5}
 .fac li{padding:4px 0;border-top:1px solid var(--line);color:#d6daee}.fac li:first-child{border-top:0}
 .fac b{font-variant-numeric:tabular-nums}
+details.fold>summary{cursor:pointer;font-weight:700;font-size:14px;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:10px;color:#d6daee}
+details.fold>summary::-webkit-details-marker{display:none}
+details.fold>summary::after{content:"+";color:var(--mute);font-size:18px;line-height:1}
+details.fold[open]>summary::after{content:"\2212"}
+details.fold[open]>summary{margin-bottom:10px}
+section.card.foldcard{padding:12px 16px}
+section.card.foldcard+section.card.foldcard{margin-top:8px}
 details.how summary{cursor:pointer;font-weight:700;font-size:15px}
 details.how ol{margin:10px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#d6daee}
 details.how li{margin-bottom:6px}
@@ -141,28 +148,32 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
   </section>
-  <section class="card" id="brokercard" hidden>
-    <div class="calbox">
-      <h3>Samakan dengan broker / TradingView</h3>
+  <section class="card foldcard" id="brokercard" hidden>
+    <details class="fold calbox">
+      <summary>Samakan dengan broker / TradingView</summary>
       <p class="note">Isi harga di broker atau chart TradingView (mis. FXCM) sekarang. Aplikasi membandingkannya dengan harga M1 terbaru, lalu menggeser semua harga di layar supaya sejajar. Sinyal tidak berubah, hanya angkanya.</p>
       <div class="brow"><input id="cal" inputmode="decimal" autocomplete="off" placeholder="Harga broker/TV sekarang" aria-label="Harga broker atau TradingView sekarang"><button id="calbtn" type="button">Samakan</button></div>
       <div id="calhint"></div>
       <div id="calout"></div>
-    </div>
-    <h2>Hitung dari harga masuk Anda</h2>
+    </details>
+    <details class="fold calbox" style="margin-bottom:0">
+    <summary>Hitung dari harga masuk Anda</summary>
     <p class="note">Harga di broker bisa berbeda dari data aplikasi. Ketik harga saat ini di broker Anda, lalu level Entry, SL, dan TP dihitung ulang dari jarak poin sinyal.</p>
     <div class="brow"><input id="bp" inputmode="decimal" autocomplete="off" placeholder="mis. 29011.91" aria-label="Harga di broker Anda"><button id="bclear" type="button">Hapus</button></div>
     <div class="brow"><input id="sp" inputmode="decimal" autocomplete="off" placeholder="Spread broker (poin), mis. 0.36" aria-label="Spread broker dalam poin"></div>
     <div id="bout"></div>
+    </details>
   </section>
-  <section class="card" id="riskcard" hidden>
-    <h2>Manajemen risiko · <span id="rkname"></span></h2>
+  <section class="card foldcard" id="riskcard" hidden>
+    <details class="fold">
+    <summary>Manajemen risiko · <span id="rkname"></span></summary>
     <p class="note" id="rkprof"></p>
     <p class="note">Isi berurutan: saldo akun · risiko per trade (%) · nilai per 1,00 poin untuk 1 lot (selalu USD). Untuk akun cent (USC), centang kotak di bawah dan isi saldo dalam USC. Tersimpan di perangkat ini, terpisah untuk tiap instrumen.</p>
     <div class="brow"><input id="rkbal" inputmode="decimal" autocomplete="off" placeholder="Saldo akun (USD)" aria-label="Saldo akun"><input id="rkpct" inputmode="decimal" autocomplete="off" placeholder="Risiko per trade (%)" aria-label="Risiko per trade dalam persen"></div>
     <label class="note" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="rkcent" style="width:auto"> Akun cent: saldo dan hasil dalam USC</label>
     <div class="brow"><input id="rkpv" inputmode="decimal" autocomplete="off" placeholder="Nilai per 1,00 poin per 1 lot (USD)" aria-label="Nilai per poin per lot"></div>
     <div id="rkout"></div>
+    </details>
   </section>
   <section class="card" id="sumcard" hidden>
     <h2>Ringkasan teknikal</h2>
@@ -180,7 +191,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.15 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.16 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>

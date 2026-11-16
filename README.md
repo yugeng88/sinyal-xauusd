@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.15 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.16 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,10 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.16: panel yang jarang dipakai diperkecil
+
+Tiga panel di tab XAUUSD/NASDAQ kini berupa lipatan yang tertutup bawaan, tinggal ketuk judulnya untuk membuka: **Samakan dengan broker / TradingView**, **Hitung dari harga masuk Anda**, dan **Manajemen risiko**. Isi dan perhitungannya tidak berubah, hanya tampilannya.
 
 ## Yang baru di v19.14-19.15: setup Fib Retracement (sesuai pengaturan TradingView Anda)
 
