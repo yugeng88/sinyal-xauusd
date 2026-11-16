@@ -394,14 +394,17 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
 
     # Setup Fib Retracement pengguna (blok tambahan; tidak mengubah arah/level sinyal utama).
     fib = fib_setup.compute(df, atr_v, live_price, direction)
-    if fib.get("status") in ("IN_ZONE", "WAIT_PULLBACK", "DEEP") and not market_closed:
-        fd = fib["direction"]
-        if direction in ("BUY", "SELL") and direction != fd:
-            warnings.append(f"Setup Fib mengarah {fd} (kaki {fib['leg']['type']}), berlawanan dengan sinyal utama "
-                            f"{direction}. Jangan campur dua arah; tunggu salah satu batal.")
-        elif fib["status"] == "IN_ZONE":
-            reasons.append(f"Fib: harga di zona entry {fd} ({fib['zone']['from']:,.2f} - {fib['zone']['to']:,.2f}), "
-                           f"SL {fib['stop_loss']:,.2f}, TP1 {fib['tp'][0]:,.2f}.")
+    if fib.get("direction") and not market_closed:
+        for fs in (fib, fib.get("alt") or {}):
+            if fs.get("status") != "IN_ZONE":
+                continue
+            fd = fs["direction"]
+            if direction in ("BUY", "SELL") and direction != fd:
+                warnings.append(f"Fib {fd} ada di zona entry ({fs['zone']['from']:,.2f} - {fs['zone']['to']:,.2f}) "
+                                f"tetapi sinyal utama {direction}. Jangan campur dua arah; pilih satu.")
+            else:
+                reasons.append(f"Fib {fd}: harga di zona entry ({fs['zone']['from']:,.2f} - {fs['zone']['to']:,.2f}), "
+                               f"SL {fs['stop_loss']:,.2f}, TP1 {fs['tp'][0]:,.2f}.")
 
     tail = df.tail(chart_bars)
     return {

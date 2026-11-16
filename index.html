@@ -243,7 +243,7 @@ function fibBox(f){
   const al = f.aligned_with_engine;
   const alTxt = al==null ? "Sinyal utama: belum ada arah." : (al ? "Searah dengan sinyal utama." : "BERLAWANAN dengan sinyal utama.");
   const rows = (f.levels||[]).map(x=>`<div class="cell"><small>${esc(x.level)} · ${esc(x.role)}</small><b>${fp(x.price)}</b></div>`).join("");
-  return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (kaki ${esc(f.leg.type)})</b>
+  return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw)})</b>
     <div class="sub"><span class="warnline" style="font-weight:700">${st.t}</span> · ${esc(f.note||"")}</div>
     <div class="grid" style="margin-top:8px">
       <div class="cell"><small>Entry (limit)</small><b>${fp(f.entry)}</b></div>
@@ -301,7 +301,7 @@ function render(s){
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
     <p class="note">Keselarasan strategi${A?" (saat terbit)":""}, bukan peluang profit.</p></div>
     ${sig.strategy_engine?`<div class="note-box" style="margin-top:12px"><b>V19 Advanced Strategy Engine · ${esc(sig.strategy_engine.votes)}/3 keluarga</b><div class="sub">Minimal 2 keluarga berbeda harus searah. Tujuh setup digabung agar setup dalam keluarga yang sama tidak dihitung berulang.</div><div class="grid" style="margin-top:8px">${Object.entries(sig.strategy_engine.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${['BUY','SELL','WAIT'].includes(side)?side:''}">${esc(side)}</b></div>`).join("")}</div><div class="sub" style="margin-top:8px">Keluarga: ${Object.entries(sig.strategy_engine.families||{}).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(" · ")} · VWAP ${esc(sig.strategy_engine.context?.vwap??"–")} · ADX ${esc(sig.strategy_engine.context?.adx??"–")}</div></div>`:""}
-    ${fibBox(sig.fib)}`;
+    ${fibBox(sig.fib)}${sig.fib&&sig.fib.alt?fibBox(sig.fib.alt):""}`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;
