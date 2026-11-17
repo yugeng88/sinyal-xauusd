@@ -192,7 +192,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.20 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.21 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -282,9 +282,12 @@ function fibBox(f){
   const al = f.aligned_with_engine;
   const alTxt = al==null ? "Sinyal utama: belum ada arah." : (al ? "Searah dengan sinyal utama." : "BERLAWANAN dengan sinyal utama.");
   const rows = (f.levels||[]).map(x=>`<div class="cell"><small>${esc(x.level)} · ${esc(x.role)}</small><b>${fp(x.price)}</b></div>`).join("");
-  return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw_label||f.leg.draw)})</b>
+  const dead = f.status==="INVALID" || f.status==="EXTENDED";
+  const qual = (f.struct?`<div class="sub" style="margin-top:6px">${f.struct.ok?"✓":"⚠"} ${esc(f.struct.text)}</div>`:"")
+             + (f.div?`<div class="sub" style="margin-top:4px">✓ ${esc(f.div.text)}</div>`:"");
+  const inner = `<b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw_label||f.leg.draw)})</b>
     <div class="sub"><span class="warnline" style="font-weight:700">${st.t}</span> · ${esc(f.note||"")}</div>
-    ${orderBox(f)}
+    ${orderBox(f)}${qual}
     <div class="grid" style="margin-top:8px">
       <div class="cell"><small>Area entry (0.63–0.78)</small><b>${fp(f.zone.from)} – ${fp(f.zone.to)}</b></div>
       <div class="cell"><small>Titik balik (0.03)</small><b>${fp(f.turn)}</b></div>
@@ -295,7 +298,16 @@ function fibBox(f){
     </div>
     <div class="sub" style="margin-top:8px">Kaki ${fp(f.leg.start)} → ${fp(f.leg.end)} (${fmt(f.leg.range)} poin) · posisi harga di fib ${fmt(f.ratio,2)} · ${alTxt}</div>
     <details style="margin-top:8px"><summary class="sub">Semua level Fib</summary><div class="grid" style="margin-top:8px">${rows}</div></details>
-    <p class="note">Kecenderungan dari struktur harga, bukan prediksi. Level dihitung ulang tiap candle tertutup.</p></div>`;
+    <p class="note">Kecenderungan dari struktur harga, bukan prediksi. Level dihitung ulang tiap candle tertutup.</p>`;
+  if(!dead) return `<div class="note-box" style="margin-top:12px">${inner}</div>`;
+  return `<details class="note-box" style="margin-top:12px"><summary class="sub"><b>Fib ${esc(f.direction)} (${esc(f.leg.draw_label||f.leg.draw)})</b> · ${st.t} <small>(tidak aktif, ketuk untuk detail)</small></summary><div style="margin-top:8px">${inner}</div></details>`;
+}
+function fibBoxes(fib){
+  if(!fib) return "";
+  const list = [fib, fib.alt].filter(Boolean);
+  const isDead = x => x.status==="INVALID" || x.status==="EXTENDED";
+  list.sort((a,b)=>Number(isDead(a))-Number(isDead(b)));           // setup aktif di atas, yang batal/lewat di bawah
+  return list.map(fibBox).join("");
 }
 function render(s){
   const sig = s.signal;
@@ -341,7 +353,7 @@ function render(s){
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
     <p class="note">Keselarasan strategi${A?" (saat terbit)":""}, bukan peluang profit.</p></div>
     ${sig.strategy_engine?`<div class="note-box" style="margin-top:12px"><b>V19 Advanced Strategy Engine · ${esc(sig.strategy_engine.votes)}/3 keluarga</b><div class="sub">Minimal 2 keluarga berbeda harus searah. Tujuh setup digabung agar setup dalam keluarga yang sama tidak dihitung berulang.</div><div class="grid" style="margin-top:8px">${Object.entries(sig.strategy_engine.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${['BUY','SELL','WAIT'].includes(side)?side:''}">${esc(side)}</b></div>`).join("")}</div><div class="sub" style="margin-top:8px">Keluarga: ${Object.entries(sig.strategy_engine.families||{}).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(" · ")} · VWAP ${esc(sig.strategy_engine.context?.vwap??"–")} · ADX ${esc(sig.strategy_engine.context?.adx??"–")}</div></div>`:""}
-    ${fibBox(sig.fib)}${sig.fib&&sig.fib.alt?fibBox(sig.fib.alt):""}${fibTfBox(s.fib_tfs)}`;
+    ${fibBoxes(sig.fib)}${fibTfBox(s.fib_tfs)}`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;

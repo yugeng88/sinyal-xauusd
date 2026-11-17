@@ -53,7 +53,7 @@ def config():
     if len(tp) != 3 or list(tp) != sorted(tp, reverse=True):   # harus 3 TP, makin jauh makin kecil (negatif)
         tp = (-0.33, -0.66, -0.99)
     return {"enabled": os.getenv("FIB_ENABLED", "1").lower() not in ("0", "off", "false", "no"),
-            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "sl": sl, "sl_buffer_atr": buf, "tp": tp,
+            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "div": os.getenv("FIB_DIV", "1").lower() not in ("0", "off", "false", "no"), "sl": sl, "sl_buffer_atr": buf, "tp": tp,
             "pivot": max(1, pivot), "min_atr": min_atr, "max_age": max_age}
 
 
@@ -116,6 +116,65 @@ def find_leg(df, atr_v, cfg=None):
         lab_a = _struct_label(a[1], float(a[2]), prev_a)
         lab_b = _struct_label(b[1], end_v, prev_b)
         return ("BUY" if up else "SELL"), float(a[2]), end_v, int(a[0]), int(end_i), lab_a, lab_b
+    return None
+
+
+def _structure(direction, lo_lab, hi_lab):
+    """Kaki Fib yang baik lahir dari break of structure (BOS): BUY bila high kaki menembus high sebelumnya (HH),
+    SELL bila low kaki menembus low sebelumnya (LL). None bila belum ada pembanding."""
+    if direction == "BUY":
+        if hi_lab == "HH":
+            return {"ok": True, "text": "Struktur valid: high kaki menembus high sebelumnya (HH, BOS naik)."}
+        if hi_lab == "LH":
+            return {"ok": False, "text": "Struktur lemah: high kaki belum menembus high sebelumnya (LH), belum ada BOS naik."}
+    else:
+        if lo_lab == "LL":
+            return {"ok": True, "text": "Struktur valid: low kaki menembus low sebelumnya (LL, BOS turun)."}
+        if lo_lab == "HL":
+            return {"ok": False, "text": "Struktur lemah: low kaki belum menembus low sebelumnya (HL), belum ada BOS turun."}
+    return None
+
+
+def _rsi(close, n=14):
+    d = close.diff()
+    up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False).mean()
+    return 100 - 100 / (1 + up / dn.replace(0, np.nan))
+
+
+def divergence(df, direction, i_end, k=3, look=80):
+    """Divergensi RSI sebagai konfirmasi tambahan (bukan syarat entry), dari dua swing terakhir sebelum dan sesudah
+    ujung kaki. BUY: hidden bullish (harga higher low, RSI lower low) atau regular bullish (harga lower low,
+    RSI higher low). SELL: kebalikannya pada swing high. None bila tidak ada."""
+    try:
+        n = len(df)
+        if n < 30:
+            return None
+        rsi = _rsi(df["close"].astype(float)).to_numpy()
+        buy = direction == "BUY"
+        x = df["low" if buy else "high"].to_numpy(dtype=float)
+        pts = []
+        for i in range(max(k, n - look), n - k):
+            w = x[i - k:i + k + 1]
+            if (buy and x[i] <= w.min()) or ((not buy) and x[i] >= w.max()):
+                if not pts or i - pts[-1] >= 3:
+                    pts.append(i)
+        if len(pts) < 2:
+            return None
+        a, b = pts[-2], pts[-1]
+        if b <= i_end or b - a < 5 or np.isnan(rsi[a]) or np.isnan(rsi[b]):
+            return None
+        pa, pb, ra, rb = x[a], x[b], rsi[a], rsi[b]
+        if buy and pb > pa and rb < ra - 1:
+            return {"type": "hidden", "side": "bullish", "text": f"Hidden bullish divergence RSI (harga higher low, RSI {ra:.0f} → {rb:.0f}): konfirmasi tambahan BUY."}
+        if buy and pb < pa and rb > ra + 1:
+            return {"type": "regular", "side": "bullish", "text": f"Bullish divergence RSI (harga lower low, RSI {ra:.0f} → {rb:.0f}): konfirmasi tambahan BUY."}
+        if (not buy) and pb < pa and rb > ra + 1:
+            return {"type": "hidden", "side": "bearish", "text": f"Hidden bearish divergence RSI (harga lower high, RSI {ra:.0f} → {rb:.0f}): konfirmasi tambahan SELL."}
+        if (not buy) and pb > pa and rb < ra - 1:
+            return {"type": "regular", "side": "bearish", "text": f"Bearish divergence RSI (harga higher high, RSI {ra:.0f} → {rb:.0f}): konfirmasi tambahan SELL."}
+    except Exception:  # noqa: BLE001
+        return None
     return None
 
 
@@ -241,6 +300,10 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
         if cfg.get("ob", True):
             ob = find_ob(df, direction, min(i0, i1), zmin, zmax, float(atr_v))
         order = _order(direction, ob, zmin, zmax, sl_price, tps, px(cfg["entry"]), float(live_price), float(atr_v), cfg)
+    struct = _structure(direction, lo_lab, hi_lab)
+    div = None
+    if cfg.get("div", True) and status in ("WAIT_PULLBACK", "IN_ZONE"):
+        div = divergence(df, direction, max(i_lo, i_hi))
     aligned = None if engine_direction in (None, "WAIT") else engine_direction == direction
     return {
         "enabled": True, "status": status, "direction": direction, "note": note,
@@ -249,7 +312,7 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
                 "type": word, "draw": "low -> high" if direction == "BUY" else "high -> low", "draw_label": draw_label,
                 "start_label": hi_lab if direction == "SELL" else lo_lab, "end_label": lo_lab if direction == "SELL" else hi_lab},
         "ratio": ratio, "zone": {"from": px(z_lo), "to": px(z_hi)},
-        "entry": entry, "stop_loss": sl_price, "tp": tps, "rr": rr, "rr_zone": [rr_near, rr_far], "ob": ob, "order": order, "live_price": round(float(live_price), 2),
+        "entry": entry, "stop_loss": sl_price, "tp": tps, "rr": rr, "rr_zone": [rr_near, rr_far], "ob": ob, "order": order, "struct": struct, "div": div, "live_price": round(float(live_price), 2),
         "turn": px(cfg["turn"]), "risk_points": round(risk, 2),
         "levels": [{"level": L, "price": px(L), "role": LEVEL_ROLES.get(L, "")} for L in LEVELS],
         "aligned_with_engine": aligned,

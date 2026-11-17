@@ -349,6 +349,17 @@ def _fib_order_lines(fs, off):
             f"{src}\n{tps} (RR 1:{rr}){note}\n")
 
 
+def _fib_quality_line(fs):
+    """Satu baris kualitas setup: struktur (BOS) dan divergensi RSI bila ada."""
+    bits = []
+    st, dv = fs.get("struct"), fs.get("div")
+    if st:
+        bits.append("struktur valid (BOS)" if st["ok"] else "struktur lemah (belum BOS)")
+    if dv:
+        bits.append(f"RSI {dv['type']} {dv['side']} divergence")
+    return ("Kualitas: " + ", ".join(bits) + "\n") if bits else ""
+
+
 def fib_message(label, tf, fs, off=0.0, invalid=False, plan=False):
     """Notifikasi setup Fib: rencana order limit (plan, langsung saat setup muncul), harga masuk zona entry,
     atau setup batal setelah sempat diberitahukan."""
@@ -364,7 +375,7 @@ def fib_message(label, tf, fs, off=0.0, invalid=False, plan=False):
         side = "BUY LIMIT" if od["side"] == "BUY_LIMIT" else "SELL LIMIT"
         live = fs.get("live_price")
         return (f"{label} {tf} · FIB {side} {fp(od['entry'], off)}",
-                f"{lines}Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
+                f"{lines}{_fib_quality_line(fs)}Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
                 f"{fp(lg['start'], off)} -> {fp(lg['end'], off)})"
                 + (f"\nHarga sekarang {fp(live, off)}, belum di zona." if live is not None else "") +
                 "\nPasang limit sekarang; batalkan bila ada kabar BATAL. Bukan saran investasi.")
@@ -373,6 +384,7 @@ def fib_message(label, tf, fs, off=0.0, invalid=False, plan=False):
     rr = "/".join(f"{a:g}-{b:g}" if a != b else f"{a:g}" for a, b in zip(rz[0], rz[1]) if a is not None and b is not None)
     body = (f"Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
             f"{fp(lg['start'], off)} -> {fp(lg['end'], off)})\n")
+    body += _fib_quality_line(fs)
     body += lines if od else f"Area entry {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} | SL {fp(fs['stop_loss'], off)}\n{tps} (RR 1:{rr})\n"
     return (f"{label} {tf} · FIB {d} DI ZONA ENTRY",
             body + "Jika SL kena, hitung dulu risikonya terhadap saldo. Bukan saran investasi.")

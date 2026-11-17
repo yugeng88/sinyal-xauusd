@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.20 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.21 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,14 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Yang baru di v19.20: Order Block + BUY/SELL LIMIT siap pasang (Fib tanpa menunggu konfirmasi)
+## Yang baru di v19.21: pelajaran dari tiga video Fibonacci
+
+- **Struktur (BOS):** kaki Fib yang baik lahir dari break of structure. BUY valid bila high kaki = **HH** (menembus high sebelumnya); SELL valid bila low kaki = **LL**. Selain itu kartu menandai "struktur lemah". Hanya penanda, tidak memblokir order.
+- **Divergensi RSI** sebagai konfirmasi tambahan (bukan syarat entry): hidden bullish (harga higher low, RSI lower low) atau regular bullish untuk BUY; kebalikannya untuk SELL. Dihitung dari dua swing terakhir, swing kedua harus sesudah ujung kaki. Matikan dengan `FIB_DIV=0`.
+- **Tampilan:** setup Fib yang BATAL atau SUDAH LEWAT dilipat jadi satu baris (ketuk untuk detail) dan diurutkan di bawah setup yang masih aktif. Notifikasi memuat satu baris "Kualitas".
+- Tidak berubah: zona entry 0.63-0.78, SL, dan TP -0.33 / -0.66 / -0.99 (sudah sejalan dengan video: tarik wick ke wick, SL di luar 1.0, TP dari ekstensi). Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.20: Order Block + BUY/SELL LIMIT siap pasang (Fib tanpa menunggu konfirmasi)
 
 - **Order Block (OB) di dalam zona 0.63-0.78.** BUY = demand OB: candle turun terakhir sebelum harga naik menembus high-nya. SELL = supply OB: candle naik terakhir sebelum harga turun menembus low-nya. Syarat: menyentuh zona, ada displacement (close menembus ekstrem candle dalam 3 candle), belum ditutup menembus sisi jauhnya, dan bukan candle kecil (>= 0.15 ATR). Dipilih yang terbaru.
 - **Rencana order limit:** entry di tepi OB (dijepit ke dalam zona), SL di luar OB + buffer `FIB_OB_BUFFER_ATR` (0.1 ATR), dipakai yang lebih dekat antara itu dan SL Fib 0.99. TP tetap -0.33 / -0.66 / -0.99. Bila tidak ada OB: entry di level 0.78 dan SL 0.99. Bila harga sudah di dalam OB, entry dipindah ke titik tengah OB; bila tetap tidak bisa, kartu memberi peringatan.
