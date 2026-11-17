@@ -43,6 +43,8 @@ def config():
         entry = float(os.getenv("FIB_ENTRY", "0.78"))
         turn = float(os.getenv("FIB_TURN", "0.03"))
         ob_buf = float(os.getenv("FIB_OB_BUFFER_ATR", "0.1"))
+        ob_max = float(os.getenv("FIB_OB_MAX_ATR", "2.0"))
+        ob_min_risk = float(os.getenv("FIB_OB_MIN_RISK_ATR", "0.3"))
         sl = float(os.getenv("FIB_SL", "0.99"))
         buf = float(os.getenv("FIB_SL_BUFFER_ATR", "0"))
         pivot = int(float(os.getenv("FIB_PIVOT", "10")))
@@ -50,10 +52,11 @@ def config():
         max_age = int(float(os.getenv("FIB_MAX_AGE_BARS", "80")))
     except ValueError:
         entry, sl, buf, pivot, min_atr, max_age, turn, ob_buf = 0.78, 0.99, 0.0, 10, 3.0, 80, 0.03, 0.1
+        ob_max, ob_min_risk = 2.0, 0.3
     if len(tp) != 3 or list(tp) != sorted(tp, reverse=True):   # harus 3 TP, makin jauh makin kecil (negatif)
         tp = (-0.33, -0.66, -0.99)
     return {"enabled": os.getenv("FIB_ENABLED", "1").lower() not in ("0", "off", "false", "no"),
-            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "div": os.getenv("FIB_DIV", "1").lower() not in ("0", "off", "false", "no"), "sl": sl, "sl_buffer_atr": buf, "tp": tp,
+            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "ob_max_atr": ob_max, "ob_min_risk_atr": ob_min_risk, "div": os.getenv("FIB_DIV", "1").lower() not in ("0", "off", "false", "no"), "sl": sl, "sl_buffer_atr": buf, "tp": tp,
             "pivot": max(1, pivot), "min_atr": min_atr, "max_age": max_age}
 
 
@@ -178,7 +181,7 @@ def divergence(df, direction, i_end, k=3, look=80):
     return None
 
 
-def find_ob(df, direction, from_idx, zmin, zmax, atr_v):
+def find_ob(df, direction, from_idx, zmin, zmax, atr_v, max_atr=2.0):
     """Order Block di dalam zona entry Fib.
     BUY  = demand OB: candle TURUN terakhir sebelum harga naik menembus high-nya.
     SELL = supply OB: candle NAIK terakhir sebelum harga turun menembus low-nya.
@@ -196,6 +199,11 @@ def find_ob(df, direction, from_idx, zmin, zmax, atr_v):
             if (h[k] - l[k]) < 0.15 * atr_v:
                 continue
             if h[k] < zmin or l[k] > zmax:                    # tidak menyentuh zona
+                continue
+            if (h[k] - l[k]) > max_atr * atr_v:               # candle terlalu besar = impuls, bukan OB
+                continue
+            ov = min(h[k], zmax) - max(l[k], zmin)            # irisan dengan zona harus berarti, bukan sekadar tersentuh
+            if ov < 0.3 * min(h[k] - l[k], zmax - zmin):
                 continue
             if buy and not c[k] < o[k]:
                 continue
@@ -230,6 +238,10 @@ def _order(direction, ob, zmin, zmax, fib_sl, tps, base_entry, live, atr_v, cfg)
             entry, sl = min(ob["top"], zmax), max(ob["bottom"] - buf, fib_sl)
         else:
             entry, sl = max(ob["bottom"], zmin), min(ob["top"] + buf, fib_sl)
+    if ob:                                                     # SL jangan terlalu mepet (mudah kena noise/spread)
+        floor = cfg.get("ob_min_risk_atr", 0.3) * atr_v
+        sl = min(sl, entry - floor) if buy else max(sl, entry + floor)
+        sl = max(sl, fib_sl) if buy else min(sl, fib_sl)
     ok = entry < live if buy else entry > live
     if not ok and ob:                                          # harga sudah di dalam OB: coba titik tengah OB
         mid = round((ob["top"] + ob["bottom"]) / 2, 2)
@@ -298,7 +310,7 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
     if status in ("WAIT_PULLBACK", "IN_ZONE"):
         zmin, zmax = sorted((px(z_lo), px(z_hi)))
         if cfg.get("ob", True):
-            ob = find_ob(df, direction, min(i0, i1), zmin, zmax, float(atr_v))
+            ob = find_ob(df, direction, min(i0, i1), zmin, zmax, float(atr_v), cfg.get("ob_max_atr", 2.0))
         order = _order(direction, ob, zmin, zmax, sl_price, tps, px(cfg["entry"]), float(live_price), float(atr_v), cfg)
     struct = _structure(direction, lo_lab, hi_lab)
     div = None

@@ -61,6 +61,7 @@ h2{font-size:15px;margin-bottom:8px}
 .tab{flex:1;background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:10px;padding:11px 8px;font:600 14px var(--font);cursor:pointer}
 .tab[aria-selected="true"]{color:var(--text);border-color:var(--accent);background:#1a1d33}
 .note-box{margin-top:10px;font-size:12.5px;line-height:1.5;color:var(--wait);border:1px solid #5b4a1a;background:#2a2412;border-radius:8px;padding:8px 10px}
+.note-box.fib-live{color:var(--buy);border-color:#1f6b3a;background:#0f2a1a}.note-box.fib-live.inzone{border:2px solid var(--buy);background:#123420}.fib-live .note-box{color:var(--buy);border-color:#1f6b3a;background:#12331f}
 .CLOSED{color:var(--mute)}
 .brow{display:flex;gap:8px;margin:8px 0}
 .brow input{flex:1;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:11px 12px;font:600 16px var(--font)}
@@ -191,7 +192,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.21 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.22 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -298,7 +299,8 @@ function fibBox(f){
     <div class="sub" style="margin-top:8px">Kaki ${fp(f.leg.start)} → ${fp(f.leg.end)} (${fmt(f.leg.range)} poin) · posisi harga di fib ${fmt(f.ratio,2)} · ${alTxt}</div>
     <details style="margin-top:8px"><summary class="sub">Semua level Fib</summary><div class="grid" style="margin-top:8px">${rows}</div></details>
     <p class="note">Kecenderungan dari struktur harga, bukan prediksi. Level dihitung ulang tiap candle tertutup.</p>`;
-  if(!dead) return `<div class="note-box" style="margin-top:12px">${inner}</div>`;
+  if(!dead){ const live = f.status==="WAIT_PULLBACK" || f.status==="IN_ZONE";
+    return `<div class="note-box${live?" fib-live"+(f.status==="IN_ZONE"?" inzone":""):""}" style="margin-top:12px">${inner}</div>`; }
   return `<details class="note-box" style="margin-top:12px"><summary class="sub"><b>Fib ${esc(f.direction)} (${esc(f.leg.draw_label||f.leg.draw)})</b> · ${st.t} <small>(tidak aktif, ketuk untuk detail)</small></summary><div style="margin-top:8px">${inner}</div></details>`;
 }
 function fibBoxes(fib){

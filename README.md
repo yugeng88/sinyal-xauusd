@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.21 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.22 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Yang baru di v19.21: pelajaran dari tiga video Fibonacci
+## Yang baru di v19.22: kartu Fib hijau saat terbentuk + perbaikan Order Block
+
+- **Latar hijau:** kartu Fib berwarna hijau saat setup aktif (MENUNGGU PULLBACK atau DI ZONA ENTRY); saat DI ZONA ENTRY borderan lebih tebal. Setup BATAL/SUDAH LEWAT tetap dilipat dan netral; LEWAT ENTRY tetap kuning.
+- **Perbaikan OB:** candle yang hanya menyentuh tepi zona (irisan < 30% dari yang lebih kecil antara tinggi candle dan zona) tidak lagi dianggap OB, begitu juga candle lebih tinggi dari `FIB_OB_MAX_ATR` (2.0) x ATR (itu impuls, bukan OB). SL OB minimal `FIB_OB_MIN_RISK_ATR` (0.3) x ATR dari entry, tetapi tidak lebih lebar dari SL Fib 0.99. Sebelumnya bisa muncul SL 1.5 poin dengan RR 1:30+.
+- Level Fib (zona 0.63-0.78, SL 0.99, TP -0.33/-0.66/-0.99) tidak berubah. Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.21: pelajaran dari tiga video Fibonacci
 
 - **Struktur (BOS):** kaki Fib yang baik lahir dari break of structure. BUY valid bila high kaki = **HH** (menembus high sebelumnya); SELL valid bila low kaki = **LL**. Selain itu kartu menandai "struktur lemah". Hanya penanda, tidak memblokir order.
 - **Divergensi RSI** sebagai konfirmasi tambahan (bukan syarat entry): hidden bullish (harga higher low, RSI lower low) atau regular bullish untuk BUY; kebalikannya untuk SELL. Dihitung dari dua swing terakhir, swing kedua harus sesudah ujung kaki. Matikan dengan `FIB_DIV=0`.
