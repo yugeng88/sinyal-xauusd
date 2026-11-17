@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.19 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.20 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,14 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Yang baru di v19.19: titik jangkar diberi label struktur (LL / LH / HL / HH)
+## Yang baru di v19.20: Order Block + BUY/SELL LIMIT siap pasang (Fib tanpa menunggu konfirmasi)
+
+- **Order Block (OB) di dalam zona 0.63-0.78.** BUY = demand OB: candle turun terakhir sebelum harga naik menembus high-nya. SELL = supply OB: candle naik terakhir sebelum harga turun menembus low-nya. Syarat: menyentuh zona, ada displacement (close menembus ekstrem candle dalam 3 candle), belum ditutup menembus sisi jauhnya, dan bukan candle kecil (>= 0.15 ATR). Dipilih yang terbaru.
+- **Rencana order limit:** entry di tepi OB (dijepit ke dalam zona), SL di luar OB + buffer `FIB_OB_BUFFER_ATR` (0.1 ATR), dipakai yang lebih dekat antara itu dan SL Fib 0.99. TP tetap -0.33 / -0.66 / -0.99. Bila tidak ada OB: entry di level 0.78 dan SL 0.99. Bila harga sudah di dalam OB, entry dipindah ke titik tengah OB; bila tetap tidak bisa, kartu memberi peringatan.
+- **Notifikasi langsung:** rencana BUY/SELL LIMIT + SL + TP + OB dikirim begitu setup searah kaki terakhir muncul dan harga belum di zona (sekali per pasangan titik dan arah), lalu saat harga masuk zona, lalu kabar BATAL bila sebelumnya sudah diberitahukan. Matikan yang awal dengan `FIB_NOTIFY_EARLY=0`; matikan OB dengan `FIB_OB=0`. Gambar sebaliknya (alt) hanya diberitahukan saat masuk zona.
+- Tidak ada konfirmasi M1 untuk Fib. Limit tidak terisi bila harga tidak kembali; limit terisi bisa langsung kena SL. Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.19: titik jangkar diberi label struktur (LL / LH / HL / HH)
 
 - Kaki Fib kini ditampilkan seperti cara Anda menarik: **LL → LH** (BUY) atau **LH → LL** (SELL), di judul kartu, tabel per timeframe, dan notifikasi.
 - Label dihitung dari pivot: high yang lebih rendah dari high sebelumnya = LH, low yang lebih rendah dari low sebelumnya = LL (dan sebaliknya HH/HL). Bila belum ada pembanding, tampil Low/High.

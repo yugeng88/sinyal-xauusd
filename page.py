@@ -192,7 +192,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.19 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.20 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -257,11 +257,23 @@ function fibTfBox(tfs){
   const rows = Object.entries(tfs).map(([t,x])=>{
     const st = FIBST[x.status] || {cls:"wait", t:esc(x.status)};
     return `<tr><td><b>${esc(t)}</b></td><td class="${x.direction}">${esc(x.direction)}</td><td>${st.t}</td>
-      <td>${esc(x.draw_label||"")}<br><small>${fp(x.start)} → ${fp(x.end)}</small></td><td>${fp(x.zone.from)} – ${fp(x.zone.to)}</td><td>${fp(x.stop_loss)}</td></tr>`;
+      <td>${esc(x.draw_label||"")}<br><small>${fp(x.start)} → ${fp(x.end)}</small></td><td>${fp(x.zone.from)} – ${fp(x.zone.to)}</td><td>${x.order?fp(x.order.entry)+" · "+fp(x.order.sl):fp(x.stop_loss)}</td></tr>`;
   }).join("");
   return `<details class="note-box" style="margin-top:12px"><summary><b>Fib tiap timeframe (M15–H4)</b></summary>
-    <div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>TF</th><th>Arah</th><th>Status</th><th>Tarik · kaki</th><th>Area entry</th><th>SL</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>TF</th><th>Arah</th><th>Status</th><th>Tarik · kaki</th><th>Area entry</th><th>Limit · SL</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="note">Kaki dipilih otomatis dari pivot terbaru di tiap timeframe (H4 dari gabungan candle). Bandingkan dengan garis yang Anda tarik di TradingView; bila beda, atur FIB_PIVOT / FIB_MIN_ATR. Aplikasi tidak bisa membaca gambar di TradingView.</p></details>`;
+}
+function orderBox(f){
+  const o = f.order; if(!o) return "";
+  const buy = o.side==="BUY_LIMIT", ob = f.ob;
+  const src = ob ? `${ob.type==="demand"?"OB demand":"OB supply"} ${fp(ob.bottom)} – ${fp(ob.top)}` : "OB tidak ditemukan di zona · memakai level entry Fib";
+  const warn = o.limit_ok ? "" : `<div class="sub warnline" style="margin-top:4px">Harga sudah di dalam OB: limit tidak bisa dipasang, tunggu atau pakai market.</div>`;
+  return `<div class="note-box" style="margin-top:8px"><b>${buy?"BUY LIMIT":"SELL LIMIT"} siap pasang</b> <small>(tanpa menunggu konfirmasi)</small>
+    <div class="grid" style="margin-top:8px">
+      <div class="cell"><small>${buy?"Buy limit":"Sell limit"}</small><b>${fp(o.entry)}</b></div>
+      <div class="cell"><small>Stop loss</small><b class="sl">${fp(o.sl)}</b></div>
+    </div>
+    <div class="sub" style="margin-top:6px">${src} · risiko ${fmt(o.risk_points)} poin · RR 1:${o.rr.map(x=>fmt(x)).join(" / ")}</div>${warn}</div>`;
 }
 function fibBox(f){
   if(!f || !f.enabled) return "";
@@ -272,6 +284,7 @@ function fibBox(f){
   const rows = (f.levels||[]).map(x=>`<div class="cell"><small>${esc(x.level)} · ${esc(x.role)}</small><b>${fp(x.price)}</b></div>`).join("");
   return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw_label||f.leg.draw)})</b>
     <div class="sub"><span class="warnline" style="font-weight:700">${st.t}</span> · ${esc(f.note||"")}</div>
+    ${orderBox(f)}
     <div class="grid" style="margin-top:8px">
       <div class="cell"><small>Area entry (0.63–0.78)</small><b>${fp(f.zone.from)} – ${fp(f.zone.to)}</b></div>
       <div class="cell"><small>Titik balik (0.03)</small><b>${fp(f.turn)}</b></div>

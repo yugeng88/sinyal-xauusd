@@ -332,17 +332,47 @@ def renew_message(label, tf, r, a, off=0.0):
             "Posisi boleh ditahan dengan SL/TP baru, atau tutup bila ingin aman. Bukan saran investasi.")
 
 
-def fib_message(label, tf, fs, off=0.0, invalid=False):
-    """Notifikasi setup Fib: harga masuk zona entry, atau setup batal setelah sempat masuk zona."""
+def _fib_order_lines(fs, off):
+    """Baris rencana order limit (dari Order Block bila ada) untuk notifikasi Fib."""
+    od, ob = fs.get("order"), fs.get("ob")
+    if not od:
+        return ""
+    side = "BUY LIMIT" if od["side"] == "BUY_LIMIT" else "SELL LIMIT"
+    rr = "/".join(f"{x:g}" for x in od["rr"])
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(od["tp"]))
+    if ob:
+        src = f"OB {'demand' if ob['type'] == 'demand' else 'supply'} {fp(ob['bottom'], off)} - {fp(ob['top'], off)}"
+    else:
+        src = "OB tidak ditemukan di zona, pakai level entry Fib"
+    note = "" if od.get("limit_ok", True) else "\nHarga sudah di dalam OB: limit tidak bisa dipasang, tunggu atau pakai market."
+    return (f"{side} {fp(od['entry'], off)} | SL {fp(od['sl'], off)} | risiko {od['risk_points']:.2f}\n"
+            f"{src}\n{tps} (RR 1:{rr}){note}\n")
+
+
+def fib_message(label, tf, fs, off=0.0, invalid=False, plan=False):
+    """Notifikasi setup Fib: rencana order limit (plan, langsung saat setup muncul), harga masuk zona entry,
+    atau setup batal setelah sempat diberitahukan."""
     d, lg = fs["direction"], fs["leg"]
+    draw = lg.get("draw_label") or lg["draw"]
     if invalid:
         return (f"{label} {tf} · FIB {d} BATAL",
-                f"Harga melewati level 0.99 ({fp(fs['stop_loss'], off)}). Setup Fib {d} (tarik {lg.get('draw_label') or lg['draw']}) tidak berlaku lagi.\n"
-                "Jangan menambah posisi; tunggu garis Fib baru. Bukan saran investasi.")
+                f"Harga melewati level 0.99 ({fp(fs['stop_loss'], off)}). Setup Fib {d} (tarik {draw}) tidak berlaku lagi.\n"
+                "Batalkan limit yang belum terisi dan jangan menambah posisi; tunggu garis Fib baru. Bukan saran investasi.")
+    od = fs.get("order")
+    lines = _fib_order_lines(fs, off)
+    if plan and od:
+        side = "BUY LIMIT" if od["side"] == "BUY_LIMIT" else "SELL LIMIT"
+        live = fs.get("live_price")
+        return (f"{label} {tf} · FIB {side} {fp(od['entry'], off)}",
+                f"{lines}Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
+                f"{fp(lg['start'], off)} -> {fp(lg['end'], off)})"
+                + (f"\nHarga sekarang {fp(live, off)}, belum di zona." if live is not None else "") +
+                "\nPasang limit sekarang; batalkan bila ada kabar BATAL. Bukan saran investasi.")
     tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(fs["tp"]))
     rz = fs.get("rr_zone") or [fs["rr"], fs["rr"]]
     rr = "/".join(f"{a:g}-{b:g}" if a != b else f"{a:g}" for a, b in zip(rz[0], rz[1]) if a is not None and b is not None)
+    body = (f"Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
+            f"{fp(lg['start'], off)} -> {fp(lg['end'], off)})\n")
+    body += lines if od else f"Area entry {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} | SL {fp(fs['stop_loss'], off)}\n{tps} (RR 1:{rr})\n"
     return (f"{label} {tf} · FIB {d} DI ZONA ENTRY",
-            f"Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {lg.get('draw_label') or lg['draw']}: {fp(lg['start'], off)} -> {fp(lg['end'], off)})\n"
-            f"Area entry {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} | SL {fp(fs['stop_loss'], off)}\n{tps} (RR 1:{rr})\n"
-            "Tunggu candle konfirmasi; jika SL kena, hitung dulu risikonya terhadap saldo. Bukan saran investasi.")
+            body + "Jika SL kena, hitung dulu risikonya terhadap saldo. Bukan saran investasi.")

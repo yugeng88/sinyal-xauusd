@@ -28,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.19"
+VERSION = "19.20"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -201,8 +201,9 @@ def maybe_notify_exit(sym, tf, sig, click=None):
 
 
 def maybe_notify_fib(sym, tf, sig, click=None):
-    """Notifikasi Fib: sekali per pasangan titik jangkar dan arah, saat harga masuk zona entry;
-    lalu sekali lagi bila setup batal setelah zona sempat diberitahukan."""
+    """Notifikasi Fib (tanpa menunggu konfirmasi): rencana BUY/SELL LIMIT + SL (dari Order Block) langsung saat setup
+    searah kaki terakhir muncul dan harga belum di zona; lalu saat harga masuk zona; lalu kabar batal bila
+    sebelumnya sudah diberitahukan. Masing-masing sekali per pasangan titik jangkar dan arah."""
     if os.getenv("FIB_NOTIFY", "1").lower() in ("0", "off", "false", "no"):
         return
     tfs = [x.strip().upper() for x in os.getenv("FIB_NOTIFY_TFS", "M15,M30,H1").split(",")]
@@ -220,10 +221,14 @@ def maybe_notify_fib(sym, tf, sig, click=None):
         if not fs.get("direction"):
             continue
         base = f"fib:{sym}:{tf}:{fs['direction']}:{fs['leg']['start_time']}:{fs['leg']['end_time']}"
-        if fs["status"] == "IN_ZONE":
+        if fs is f and fs["status"] == "WAIT_PULLBACK" and fs.get("order") and \
+                os.getenv("FIB_NOTIFY_EARLY", "1").lower() not in ("0", "off", "false", "no"):
+            title, msg = notify.fib_message(sig["label"], tf, fs, off, plan=True)
+            r = notify.deliver(base + ":plan", title, msg, 4, ["triangular_ruler"], click or app_url())
+        elif fs["status"] == "IN_ZONE":
             title, msg = notify.fib_message(sig["label"], tf, fs, off)
             r = notify.deliver(base + ":zone", title, msg, 4, ["triangular_ruler"], click or app_url())
-        elif fs["status"] == "INVALID" and notify.seen(base + ":zone"):
+        elif fs["status"] == "INVALID" and (notify.seen(base + ":zone") or notify.seen(base + ":plan")):
             title, msg = notify.fib_message(sig["label"], tf, fs, off, invalid=True)
             r = notify.deliver(base + ":inv", title, msg, 4, ["warning"], click or app_url())
         else:
@@ -303,7 +308,7 @@ def _fib_brief(f):
     if not f or not f.get("enabled") or not f.get("direction"):
         return None
     return {"direction": f["direction"], "status": f["status"], "start": f["leg"]["start"], "end": f["leg"]["end"],
-            "draw_label": f["leg"].get("draw_label"),
+            "draw_label": f["leg"].get("draw_label"), "order": f.get("order"), "ob": f.get("ob"),
             "zone": f["zone"], "stop_loss": f["stop_loss"], "tp": f["tp"], "turn": f.get("turn"), "ratio": f.get("ratio")}
 
 

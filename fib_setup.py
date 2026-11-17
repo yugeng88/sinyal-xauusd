@@ -42,17 +42,18 @@ def config():
     try:
         entry = float(os.getenv("FIB_ENTRY", "0.78"))
         turn = float(os.getenv("FIB_TURN", "0.03"))
+        ob_buf = float(os.getenv("FIB_OB_BUFFER_ATR", "0.1"))
         sl = float(os.getenv("FIB_SL", "0.99"))
         buf = float(os.getenv("FIB_SL_BUFFER_ATR", "0"))
         pivot = int(float(os.getenv("FIB_PIVOT", "10")))
         min_atr = float(os.getenv("FIB_MIN_ATR", "3"))
         max_age = int(float(os.getenv("FIB_MAX_AGE_BARS", "80")))
     except ValueError:
-        entry, sl, buf, pivot, min_atr, max_age, turn = 0.78, 0.99, 0.0, 10, 3.0, 80, 0.03
+        entry, sl, buf, pivot, min_atr, max_age, turn, ob_buf = 0.78, 0.99, 0.0, 10, 3.0, 80, 0.03, 0.1
     if len(tp) != 3 or list(tp) != sorted(tp, reverse=True):   # harus 3 TP, makin jauh makin kecil (negatif)
         tp = (-0.33, -0.66, -0.99)
     return {"enabled": os.getenv("FIB_ENABLED", "1").lower() not in ("0", "off", "false", "no"),
-            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "sl": sl, "sl_buffer_atr": buf, "tp": tp,
+            "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "sl": sl, "sl_buffer_atr": buf, "tp": tp,
             "pivot": max(1, pivot), "min_atr": min_atr, "max_age": max_age}
 
 
@@ -118,6 +119,72 @@ def find_leg(df, atr_v, cfg=None):
     return None
 
 
+def find_ob(df, direction, from_idx, zmin, zmax, atr_v):
+    """Order Block di dalam zona entry Fib.
+    BUY  = demand OB: candle TURUN terakhir sebelum harga naik menembus high-nya.
+    SELL = supply OB: candle NAIK terakhir sebelum harga turun menembus low-nya.
+    Syarat: rentang candle menyentuh zona, ada displacement (close menembus ekstrem candle itu dalam 3 candle),
+    belum ditutup menembus sisi jauhnya (belum 'habis'), dan ukurannya bukan candle kecil. Yang dipilih = yang terbaru.
+    Dihitung dari candle tertutup; None bila tidak ada."""
+    try:
+        o = df["open"].to_numpy(dtype=float)
+        h = df["high"].to_numpy(dtype=float)
+        l = df["low"].to_numpy(dtype=float)
+        c = df["close"].to_numpy(dtype=float)
+        n = len(df)
+        buy = direction == "BUY"
+        for k in range(n - 2, max(from_idx, 0) - 1, -1):
+            if (h[k] - l[k]) < 0.15 * atr_v:
+                continue
+            if h[k] < zmin or l[k] > zmax:                    # tidak menyentuh zona
+                continue
+            if buy and not c[k] < o[k]:
+                continue
+            if (not buy) and not c[k] > o[k]:
+                continue
+            nxt = c[k + 1:k + 4]
+            if buy and not (nxt > h[k]).any():
+                continue
+            if (not buy) and not (nxt < l[k]).any():
+                continue
+            later = c[k + 1:]
+            if buy and (later < l[k]).any():                  # sudah ditutup di bawah OB: gugur
+                continue
+            if (not buy) and (later > h[k]).any():
+                continue
+            return {"type": "demand" if buy else "supply", "top": round(float(h[k]), 2), "bottom": round(float(l[k]), 2),
+                    "time": df["time"].iloc[k].isoformat()}
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _order(direction, ob, zmin, zmax, fib_sl, tps, base_entry, live, atr_v, cfg):
+    """Rencana order limit siap pasang. Dengan OB: entry di tepi OB (dijepit ke zona), SL di luar OB + buffer
+    (dipakai yang lebih dekat antara itu dan SL Fib 0.99). Tanpa OB: entry di level entry Fib, SL Fib."""
+    buy = direction == "BUY"
+    entry, sl, basis = base_entry, fib_sl, "zona"
+    if ob:
+        basis = "OB"
+        buf = cfg.get("ob_buffer_atr", 0.1) * atr_v
+        if buy:
+            entry, sl = min(ob["top"], zmax), max(ob["bottom"] - buf, fib_sl)
+        else:
+            entry, sl = max(ob["bottom"], zmin), min(ob["top"] + buf, fib_sl)
+    ok = entry < live if buy else entry > live
+    if not ok and ob:                                          # harga sudah di dalam OB: coba titik tengah OB
+        mid = round((ob["top"] + ob["bottom"]) / 2, 2)
+        mid = min(mid, zmax) if buy else max(mid, zmin)
+        if (mid < live) if buy else (mid > live):
+            entry, ok = mid, True
+    entry, sl = round(entry, 2), round(sl, 2)
+    risk = abs(entry - sl)
+    if risk <= 0:
+        return None
+    return {"side": "BUY_LIMIT" if buy else "SELL_LIMIT", "entry": entry, "sl": sl, "basis": basis, "limit_ok": bool(ok),
+            "risk_points": round(risk, 2), "tp": list(tps), "rr": [round(abs(t - entry) / risk, 2) for t in tps]}
+
+
 def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_direction, cfg, labels=None):
     """Satu setup dari dua titik jangkar. BUY: tarik low -> high. SELL: tarik high -> low."""
     if direction == "BUY":
@@ -168,6 +235,12 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
         rk = abs(e - sl_price)
         return [round(abs(t - e) / rk, 2) if rk > 0 else None for t in tps]
     rr_near, rr_far = _rr_from(z_lo), _rr_from(z_hi)
+    ob, order = None, None
+    if status in ("WAIT_PULLBACK", "IN_ZONE"):
+        zmin, zmax = sorted((px(z_lo), px(z_hi)))
+        if cfg.get("ob", True):
+            ob = find_ob(df, direction, min(i0, i1), zmin, zmax, float(atr_v))
+        order = _order(direction, ob, zmin, zmax, sl_price, tps, px(cfg["entry"]), float(live_price), float(atr_v), cfg)
     aligned = None if engine_direction in (None, "WAIT") else engine_direction == direction
     return {
         "enabled": True, "status": status, "direction": direction, "note": note,
@@ -176,7 +249,7 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
                 "type": word, "draw": "low -> high" if direction == "BUY" else "high -> low", "draw_label": draw_label,
                 "start_label": hi_lab if direction == "SELL" else lo_lab, "end_label": lo_lab if direction == "SELL" else hi_lab},
         "ratio": ratio, "zone": {"from": px(z_lo), "to": px(z_hi)},
-        "entry": entry, "stop_loss": sl_price, "tp": tps, "rr": rr, "rr_zone": [rr_near, rr_far],
+        "entry": entry, "stop_loss": sl_price, "tp": tps, "rr": rr, "rr_zone": [rr_near, rr_far], "ob": ob, "order": order, "live_price": round(float(live_price), 2),
         "turn": px(cfg["turn"]), "risk_points": round(risk, 2),
         "levels": [{"level": L, "price": px(L), "role": LEVEL_ROLES.get(L, "")} for L in LEVELS],
         "aligned_with_engine": aligned,
