@@ -28,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.16"
+VERSION = "19.19"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -298,6 +298,41 @@ def pick():
     return (sym, tf) if sym in SYMS and tf in TFS else (None, None)
 
 
+def _fib_brief(f):
+    """Ringkasan satu blok Fib untuk perbandingan antar timeframe."""
+    if not f or not f.get("enabled") or not f.get("direction"):
+        return None
+    return {"direction": f["direction"], "status": f["status"], "start": f["leg"]["start"], "end": f["leg"]["end"],
+            "draw_label": f["leg"].get("draw_label"),
+            "zone": f["zone"], "stop_loss": f["stop_loss"], "tp": f["tp"], "turn": f.get("turn"), "ratio": f.get("ratio")}
+
+
+def fib_overview(sym):
+    """Fib tiap timeframe (M15, M30, H1, plus H4 dari candle H1) untuk dibandingkan dengan garis TradingView."""
+    out = {}
+    h4 = None
+    for t in ("M15", "M30", "H1"):
+        sg = None
+        try:
+            nat = mt5_signal(sym, t)
+            sg = nat["signal"] if nat else None
+        except Exception:  # noqa: BLE001
+            sg = None
+        if sg is None:
+            with lock:
+                sg = states[(sym, t)]["signal"]
+        sg = sg or {}
+        b = _fib_brief(sg.get("fib"))
+        if b:
+            out[t] = b
+        if sg.get("fib_h4") and (h4 is None or t == "H1"):
+            h4 = sg["fib_h4"]
+    b4 = _fib_brief(h4)
+    if b4:
+        out["H4"] = b4
+    return {k: out[k] for k in ("M15", "M30", "H1", "H4") if k in out}
+
+
 @app.get("/api/signal")
 def api_signal():
     sym, tf = pick()
@@ -311,7 +346,7 @@ def api_signal():
         s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                          "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
                  symbol=sym, tf=tf, update_seconds=60, next_update=None, now=now().isoformat(), mt5=True,
-                 news_guard=calendar_guard())
+                 news_guard=calendar_guard(), fib_tfs=fib_overview(sym))
         return jsonify(s)
     if request.args.get("force") == "1":
         with lock:
@@ -329,7 +364,7 @@ def api_signal():
     s.update(notify={"channels": notify.channels(), "last_cron": last_cron(),
                      "shared": bool(notify._redis()), "offset": notify.offset_record(sym)},
              symbol=sym, tf=tf, update_seconds=ttl_seconds(tf), next_update=nxt,
-             now=now().isoformat(), news_guard=calendar_guard())
+             now=now().isoformat(), news_guard=calendar_guard(), fib_tfs=fib_overview(sym))
     return jsonify(s)
 
 

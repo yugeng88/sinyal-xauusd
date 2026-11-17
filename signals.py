@@ -394,6 +394,10 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
 
     # Setup Fib Retracement pengguna (blok tambahan; tidak mengubah arah/level sinyal utama).
     fib = fib_setup.compute(df, atr_v, live_price, direction)
+    # Fib timeframe besar (H4) dari candle yang sama, untuk membandingkan dengan garis yang digambar di TradingView.
+    fib_htf = None
+    if tf in ("M15", "M30", "H1") and fib.get("enabled"):
+        fib_htf = fib_setup.compute_htf(df, minutes, live_price, direction)
     if fib.get("direction") and not market_closed:
         for fs in (fib, fib.get("alt") or {}):
             if fs.get("status") != "IN_ZONE":
@@ -431,6 +435,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         },
         "levels": levels,
         "fib": fib,
+        "fib_h4": fib_htf,
         "reasons": reasons,
         "warnings": warnings,
         "chart": [{"t": t.isoformat(), "c": round(float(x), 2)}

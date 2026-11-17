@@ -191,7 +191,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.16 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.19 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -247,6 +247,21 @@ const FIBST = {
   DEEP:{cls:"bad", t:"LEWAT ENTRY · dekat SL"}, INVALID:{cls:"bad", t:"SETUP BATAL"},
   EXTENDED:{cls:"bad", t:"SUDAH LEWAT · jangan kejar"}, NO_SETUP:{cls:"wait", t:"BELUM ADA KAKI FIB"}
 };
+function rzTxt(f,i){
+  const z=f.rr_zone; if(!z) return fmt(f.rr[i]);
+  const a=z[0][i], b=z[1][i]; return a==null||b==null ? "-" : (a===b ? fmt(a) : fmt(a)+"–"+fmt(b));
+}
+function fibTfBox(tfs){
+  if(!tfs || !Object.keys(tfs).length) return "";
+  const rows = Object.entries(tfs).map(([t,x])=>{
+    const st = FIBST[x.status] || {cls:"wait", t:esc(x.status)};
+    return `<tr><td><b>${esc(t)}</b></td><td class="${x.direction}">${esc(x.direction)}</td><td>${st.t}</td>
+      <td>${esc(x.draw_label||"")}<br><small>${fp(x.start)} → ${fp(x.end)}</small></td><td>${fp(x.zone.from)} – ${fp(x.zone.to)}</td><td>${fp(x.stop_loss)}</td></tr>`;
+  }).join("");
+  return `<details class="note-box" style="margin-top:12px"><summary><b>Fib tiap timeframe (M15–H4)</b></summary>
+    <div style="overflow-x:auto;margin-top:8px"><table><thead><tr><th>TF</th><th>Arah</th><th>Status</th><th>Tarik · kaki</th><th>Area entry</th><th>SL</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <p class="note">Kaki dipilih otomatis dari pivot terbaru di tiap timeframe (H4 dari gabungan candle). Bandingkan dengan garis yang Anda tarik di TradingView; bila beda, atur FIB_PIVOT / FIB_MIN_ATR. Aplikasi tidak bisa membaca gambar di TradingView.</p></details>`;
+}
 function fibBox(f){
   if(!f || !f.enabled) return "";
   const st = FIBST[f.status] || {cls:"wait", t:esc(f.status)};
@@ -254,17 +269,17 @@ function fibBox(f){
   const al = f.aligned_with_engine;
   const alTxt = al==null ? "Sinyal utama: belum ada arah." : (al ? "Searah dengan sinyal utama." : "BERLAWANAN dengan sinyal utama.");
   const rows = (f.levels||[]).map(x=>`<div class="cell"><small>${esc(x.level)} · ${esc(x.role)}</small><b>${fp(x.price)}</b></div>`).join("");
-  return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw)})</b>
+  return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement · ${esc(f.direction)} (tarik ${esc(f.leg.draw_label||f.leg.draw)})</b>
     <div class="sub"><span class="warnline" style="font-weight:700">${st.t}</span> · ${esc(f.note||"")}</div>
     <div class="grid" style="margin-top:8px">
-      <div class="cell"><small>Entry (limit)</small><b>${fp(f.entry)}</b></div>
-      <div class="cell"><small>Zona entry</small><b>${fp(f.zone.from)} – ${fp(f.zone.to)}</b></div>
+      <div class="cell"><small>Area entry (0.63–0.78)</small><b>${fp(f.zone.from)} – ${fp(f.zone.to)}</b></div>
+      <div class="cell"><small>Titik balik (0.03)</small><b>${fp(f.turn)}</b></div>
       <div class="cell"><small>Stop loss</small><b class="sl">${fp(f.stop_loss)}</b></div>
-      <div class="cell"><small>TP1 · RR 1:${fmt(f.rr[0])}</small><b class="tp">${fp(f.tp[0])}</b></div>
-      <div class="cell"><small>TP2 · RR 1:${fmt(f.rr[1])}</small><b class="tp">${fp(f.tp[1])}</b></div>
-      <div class="cell"><small>TP3 · RR 1:${fmt(f.rr[2])}</small><b class="tp">${fp(f.tp[2])}</b></div>
+      <div class="cell"><small>TP1 · RR 1:${rzTxt(f,0)}</small><b class="tp">${fp(f.tp[0])}</b></div>
+      <div class="cell"><small>TP2 · RR 1:${rzTxt(f,1)}</small><b class="tp">${fp(f.tp[1])}</b></div>
+      <div class="cell"><small>TP3 · RR 1:${rzTxt(f,2)}</small><b class="tp">${fp(f.tp[2])}</b></div>
     </div>
-    <div class="sub" style="margin-top:8px">Kaki ${fp(f.leg.start)} → ${fp(f.leg.end)} (${fmt(f.leg.range)} poin) · posisi harga di fib ${fmt(f.ratio,2)} · ${alTxt} Target perpanjangan -0.99: ${fp(f.tp_extra)}.</div>
+    <div class="sub" style="margin-top:8px">Kaki ${fp(f.leg.start)} → ${fp(f.leg.end)} (${fmt(f.leg.range)} poin) · posisi harga di fib ${fmt(f.ratio,2)} · ${alTxt}</div>
     <details style="margin-top:8px"><summary class="sub">Semua level Fib</summary><div class="grid" style="margin-top:8px">${rows}</div></details>
     <p class="note">Kecenderungan dari struktur harga, bukan prediksi. Level dihitung ulang tiap candle tertutup.</p></div>`;
 }
@@ -312,7 +327,7 @@ function render(s){
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
     <p class="note">Keselarasan strategi${A?" (saat terbit)":""}, bukan peluang profit.</p></div>
     ${sig.strategy_engine?`<div class="note-box" style="margin-top:12px"><b>V19 Advanced Strategy Engine · ${esc(sig.strategy_engine.votes)}/3 keluarga</b><div class="sub">Minimal 2 keluarga berbeda harus searah. Tujuh setup digabung agar setup dalam keluarga yang sama tidak dihitung berulang.</div><div class="grid" style="margin-top:8px">${Object.entries(sig.strategy_engine.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${['BUY','SELL','WAIT'].includes(side)?side:''}">${esc(side)}</b></div>`).join("")}</div><div class="sub" style="margin-top:8px">Keluarga: ${Object.entries(sig.strategy_engine.families||{}).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(" · ")} · VWAP ${esc(sig.strategy_engine.context?.vwap??"–")} · ADX ${esc(sig.strategy_engine.context?.adx??"–")}</div></div>`:""}
-    ${fibBox(sig.fib)}${sig.fib&&sig.fib.alt?fibBox(sig.fib.alt):""}`;
+    ${fibBox(sig.fib)}${sig.fib&&sig.fib.alt?fibBox(sig.fib.alt):""}${fibTfBox(s.fib_tfs)}`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");
   const i = sig.indicators;

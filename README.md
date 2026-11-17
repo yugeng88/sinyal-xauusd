@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.16 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.19 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,28 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Yang baru di v19.16: panel yang jarang dipakai diperkecil
+## Yang baru di v19.19: titik jangkar diberi label struktur (LL / LH / HL / HH)
+
+- Kaki Fib kini ditampilkan seperti cara Anda menarik: **LL → LH** (BUY) atau **LH → LL** (SELL), di judul kartu, tabel per timeframe, dan notifikasi.
+- Label dihitung dari pivot: high yang lebih rendah dari high sebelumnya = LH, low yang lebih rendah dari low sebelumnya = LL (dan sebaliknya HH/HL). Bila belum ada pembanding, tampil Low/High.
+- Dua gambar dari pasangan titik yang sama tetap muncul (`fib` dan `fib.alt`). Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.18: Fib timeframe besar (M15-H4)
+
+- Fib juga dihitung di **H4** (digabung dari candle H1/M30/M15, batas jam UTC, candle H4 yang belum lengkap dibuang). Pivot H4 lebih rapat (3 candle kiri/kanan) karena candle-nya besar.
+- Kartu Fib punya lipatan **Fib tiap timeframe (M15-H4)**: arah, status, kaki (awal -> ujung), area entry, dan SL per timeframe, untuk dibandingkan dengan garis yang Anda tarik di TradingView.
+- API `/api/signal` menambah `fib_tfs`; tiap sinyal M15/M30/H1 memuat `fib_h4`.
+- Aplikasi tidak bisa membaca gambar di TradingView; kaki dipilih otomatis dari pivot terbaru. Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.17: peran level Fib dikoreksi
+
+- **0.03 = titik balik** (ujung kaki, area pullback/balik arah), bukan TP.
+- **TP1/TP2/TP3 = -0.33 / -0.66 / -0.99** (sebelumnya 0.03 / -0.33 / -0.66).
+- **Entry berupa area 0.63-0.78** (bukan satu level). Kartu dan notifikasi menampilkan area itu, dan RR berupa rentang (tepi 0.63 - tepi 0.78).
+- Status SUDAH LEWAT kini dipicu saat harga melewati 0.03 tanpa pullback. Env baru `FIB_TURN` (0.03); `FIB_TP` bawaan kini -0.33,-0.66,-0.99.
+- Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.16: panel yang jarang dipakai diperkecil
 
 Tiga panel di tab XAUUSD/NASDAQ kini berupa lipatan yang tertutup bawaan, tinggal ketuk judulnya untuk membuka: **Samakan dengan broker / TradingView**, **Hitung dari harga masuk Anda**, dan **Manajemen risiko**. Isi dan perhitungannya tidak berubah, hanya tampilannya.
 
@@ -16,11 +37,11 @@ Tiga panel di tab XAUUSD/NASDAQ kini berupa lipatan yang tertutup bawaan, tingga
 Blok `fib` baru di setiap hasil analisis (`fib_setup.py`) dan kartu **Setup Fib Retracement** di tab XAUUSD/NASDAQ. Level persis seperti layar pengaturan Anda: **-0.99, -0.66, -0.33, 0.03, 0.63, 0.78, 0.99** (0.786 dan 2.618 tidak dicentang, jadi tidak dipakai).
 
 - **Cara menggambar** sama dengan TradingView: level 0 di ujung kaki ayunan, level 1 di awal kaki, level negatif = perpanjangan. Diperiksa terhadap angka di screenshot Anda (0.63 = 3878.96, 0.78 = 3868.48, -0.99 = 3992.14).
-- **Dua gambar dari pasangan titik yang sama (LL/LH), seperti cara Anda menarik garis:** low -> high = setup BUY, high -> low = setup SELL (`fib` dan `fib.alt`, keduanya tampil di dasbor). Entry limit di 0.78, zona 0.63-0.78, SL di 0.99, TP1/TP2/TP3 di 0.03 / -0.33 / -0.66, dan -0.99 sebagai target perpanjangan.
+- **Dua gambar dari pasangan titik yang sama (LL/LH), seperti cara Anda menarik garis:** low -> high = setup BUY, high -> low = setup SELL (`fib` dan `fib.alt`, keduanya tampil di dasbor). Area entry 0.63-0.78, SL di 0.99, TP1/TP2/TP3 di -0.33 / -0.66 / -0.99 (0.03 = titik balik; lihat v19.17).
 - **Status:** MENUNGGU PULLBACK, DI ZONA ENTRY, LEWAT ENTRY (dekat SL), SETUP BATAL (lewat 0.99), SUDAH LEWAT (jangan kejar), BELUM ADA KAKI FIB.
 - **Tidak mengubah sinyal utama.** Bila arah Fib berlawanan dengan sinyal 3-keluarga strategi, muncul peringatan; bila searah dan harga di zona, ditambah satu alasan di daftar alasan.
-- **Env (semua opsional):** `FIB_ENABLED`, `FIB_ZONE` (0.63,0.78), `FIB_ENTRY` (0.78), `FIB_SL` (0.99), `FIB_SL_BUFFER_ATR` (0), `FIB_TP` (0.03,-0.33,-0.66), `FIB_PIVOT` (10 candle kiri/kanan, supaya yang dipilih struktur besar seperti LL/LH, bukan riak kecil), `FIB_MIN_ATR` (kaki minimal 3x ATR), `FIB_MAX_AGE_BARS` (80).
-- **Asumsi yang perlu Anda cek:** pemetaan TP1-TP3 dan entry di 0.78 saya ambil dari gambar posisi di TradingView Anda; kaki ayunan dipilih otomatis lewat pivot, jadi bisa berbeda dari kaki yang Anda gambar manual. Belum ada backtest bahwa setup ini menguntungkan. Uji: `tests/test_fib.py`.
+- **Env (semua opsional):** `FIB_ENABLED`, `FIB_ZONE` (0.63,0.78), `FIB_ENTRY` (0.78), `FIB_SL` (0.99), `FIB_SL_BUFFER_ATR` (0), `FIB_TP` (-0.33,-0.66,-0.99), `FIB_TURN` (0.03), `FIB_PIVOT` (10 candle kiri/kanan, supaya yang dipilih struktur besar seperti LL/LH, bukan riak kecil), `FIB_MIN_ATR` (kaki minimal 3x ATR), `FIB_MAX_AGE_BARS` (80).
+- **Asumsi yang perlu Anda cek:** pemetaan level sudah dikonfirmasi Anda (v19.17); kaki ayunan dipilih otomatis lewat pivot, jadi bisa berbeda dari kaki yang Anda gambar manual. Belum ada backtest bahwa setup ini menguntungkan. Uji: `tests/test_fib.py`.
 
 ### Notifikasi Fib (EA MT5 tidak diubah)
 
