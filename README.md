@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.24 NEWS + FIB + SPREAD, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.25 NEWS + FIB + SPREAD, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.25: kolom M1 (hanya Fib, tanpa notifikasi)
+
+- Tombol **M1** di baris timeframe (paling kiri). M1 hanya menampilkan **Fib** (garis, zona, OB, SL, TP, struktur, RSI) dari candle M1; tidak ada sinyal BUY/SELL, tidak ada pelacakan sinyal, dan **tidak ada notifikasi**. M1 tidak masuk `SIGNAL_TFS`, jadi cron tidak menyentuhnya.
+- Data M1 diambil dari kiriman EA (dihitung tiap kiriman, disimpan di kv `mt5m1fib:<simbol>`) atau, bila MT5 mati, dari sumber data biasa (cache 60 detik). Dasbor menyegarkan M1 tiap 20 detik.
+- Karena candle M1 berisik: pivot `FIB_M1_PIVOT` (6) dan kaki minimum `FIB_M1_MIN_ATR` (6 x ATR M1), maksimum umur kaki 120 candle. Level Fib (zona 0.63-0.78, SL 0.99, TP -0.33/-0.66/-0.99) sama dengan TF lain.
+- EA (`SinyalMT5.mq5`, `SinyalMT5-spread.mq5`) tidak diubah. Bukan saran investasi; belum ada backtest.
 
 ## Yang baru di v19.24: spread broker dibaca otomatis dari MT5
 

@@ -17,6 +17,7 @@ import requests
 from flask import Flask, Response, jsonify, request
 
 import data
+import fib_setup
 import news
 import news_calendar
 import news_context
@@ -28,7 +29,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.24"
+VERSION = "19.25"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -351,8 +352,88 @@ def fib_overview(sym):
     return {k: out[k] for k in ("M15", "M30", "H1", "H4") if k in out}
 
 
+# ---------------------------------------------------- Fib M1 (hanya tampilan)
+def m1_fib_build(df, source, broker=None):
+    """Fib di M1 untuk TAMPILAN saja: tidak membuat sinyal, tidak masuk pelacakan, tidak pernah mengirim notifikasi.
+    Pivot dan ukuran kaki minimum dibuat lebih longgar karena candle M1 sangat berisik (FIB_M1_PIVOT, FIB_M1_MIN_ATR)."""
+    if df is None or len(df) < 60:
+        raise ValueError("Candle M1 terlalu sedikit untuk menghitung Fib (butuh minimal 60).")
+    t_now = pd.Timestamp.now(tz="UTC")
+    closed, _ = signals.split_closed(df, t_now, 1)
+    if len(closed) < 60:
+        raise ValueError("Candle M1 tertutup terlalu sedikit untuk menghitung Fib.")
+    try:
+        piv = int(os.getenv("FIB_M1_PIVOT", "6"))
+        min_atr = float(os.getenv("FIB_M1_MIN_ATR", "6"))
+    except ValueError:
+        piv, min_atr = 6, 6.0
+    a = float(signals.atr(closed).iloc[-1])
+    live = float(df["close"].iloc[-1])
+    fib = fib_setup.compute(closed, a, live, None, overrides={"pivot": piv, "min_atr": min_atr, "max_age": 120})
+    last_t = closed.iloc[-1]["time"]
+    age_min = max(0.0, (t_now - last_t).total_seconds() / 60 - 1)
+    return _jsonable({"fib": fib, "price": live, "atr": round(a, 3), "candle_time": last_t.isoformat(),
+                      "source": source, "broker_symbol": broker,
+                      "market_closed": age_min > data.TF["M1"]["stale_h"] * 60})
+
+
+def _m1fib_store(sym, df, source, broker):
+    """Dipanggil dari kiriman EA: hitung Fib M1 sekali per kiriman dan simpan (aman bila gagal)."""
+    try:
+        rec = {"m1fib": m1_fib_build(df, source, broker), "updated_at": now().isoformat()}
+    except Exception as e:  # noqa: BLE001
+        rec = {"m1fib": None, "error": f"{type(e).__name__}: {e}", "updated_at": now().isoformat()}
+    _mt5.setdefault("m1fib", {})[sym] = {**rec, "_read": time.time()}
+    notify.kv_set(f"mt5m1fib:{sym}", json.dumps(rec), ttl=900)
+
+
+def _m1fib_native(sym):
+    rec = _mt5.get("m1fib", {}).get(sym)
+    if not rec or time.time() - rec.get("_read", 0) > 20:
+        raw_v = notify.kv_get(f"mt5m1fib:{sym}")
+        if raw_v:
+            try:
+                got = json.loads(raw_v)
+                if not rec or got.get("updated_at", "") >= rec.get("updated_at", ""):
+                    rec = {**got, "_read": time.time()}
+                    _mt5.setdefault("m1fib", {})[sym] = rec
+            except ValueError:
+                pass
+    if rec and rec.get("updated_at") and (pd.Timestamp.now(tz="UTC") - pd.Timestamp(rec["updated_at"])) <= pd.Timedelta(minutes=5):
+        return rec
+    return None
+
+
+def api_signal_m1():
+    """Tab M1: hanya Fib. Tidak lewat refresh/track/notifikasi sinyal."""
+    sym = (request.args.get("symbol") or SYMS[0]).upper()
+    if sym not in SYMS:
+        return jsonify(error="Instrumen tidak dikenal", symbols=SYMS, timeframes=TFS + ["M1"]), 404
+    out = {"symbol": sym, "tf": "M1", "mode": "fib_only", "signal": None, "label": data.SYMBOLS[sym]["label"],
+           "now": now().isoformat(), "update_seconds": 60, "news_guard": calendar_guard(), "error": None}
+    if sym in mt5_alive_map():
+        rec = _m1fib_native(sym)
+        if rec and rec.get("m1fib"):
+            out.update(rec["m1fib"], updated_at=rec["updated_at"])
+            return jsonify(out)
+        if rec and rec.get("error"):
+            out["error"] = "Kiriman M1 dari MT5 belum cukup: " + rec["error"]
+            return jsonify(out)
+    c = get_m1(sym)
+    if c["df"] is None:
+        out["error"] = "Data M1 belum bisa diambil: " + (c["error"] or "belum ada data")
+        return jsonify(out)
+    try:
+        out.update(m1_fib_build(c["df"], c["source"]), updated_at=(c["at"] or now()).isoformat())
+    except Exception as e:  # noqa: BLE001
+        out["error"] = f"{type(e).__name__}: {e}"
+    return jsonify(out)
+
+
 @app.get("/api/signal")
 def api_signal():
+    if (request.args.get("tf") or "").upper() == "M1":
+        return api_signal_m1()                 # tab M1: hanya tampilan Fib
     sym, tf = pick()
     if sym is None:
         return jsonify(error="Instrumen atau timeframe tidak dikenal",
@@ -1056,6 +1137,7 @@ def mt5_ingest(j):
             m1 = _mt5_frame(tfs["M1"], feed_time)
             if len(m1):
                 m1s[sym] = m1
+                _m1fib_store(sym, m1, f"MT5 {broker}", broker)      # tab M1 (tampilan saja)
         for tf in TFS:
             rows = tfs.get(tf)
             if not rows:

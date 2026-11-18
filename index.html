@@ -85,6 +85,8 @@ h2{font-size:15px;margin-bottom:8px}
 .calbox{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:12px;background:#10142a}
 .calbox h3{font-size:14px;margin:0 0 4px}.calbox .brow{margin:8px 0}
 .offchip{font-size:12px;color:var(--wait);margin-top:4px}
+body.onm1 #main, body.onm1 #sumcard, body.onm1 #indcard, body.onm1 #histcard, body.onm1 #brokercard, body.onm1 #riskcard{display:none !important}
+#m1view{display:none} body.onm1 #m1view{display:grid;gap:14px}
 body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard, body.onnews #histcard, body.onnews #brokercard, body.onnews #riskcard{display:none !important}
 #newsview{display:none} body.onnews #newsview{display:grid;gap:14px}
 .evs{display:flex;flex-wrap:wrap;gap:6px}
@@ -137,6 +139,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <button class="tab" role="tab" id="tab-NEWS" data-sym="NEWS">NEWS</button>
   </div>
   <div class="tfs" role="tablist" aria-label="Pilih timeframe">
+    <button class="tf" role="tab" data-tf="M1">M1</button>
     <button class="tf" role="tab" data-tf="M5">M5</button>
     <button class="tf" role="tab" data-tf="M15">M15</button>
     <button class="tf" role="tab" data-tf="M30">M30</button>
@@ -146,6 +149,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <div id="err" class="card error" hidden></div>
   <div id="newsguard" class="guard" hidden></div>
   <section id="newsview"></section>
+  <section id="m1view"></section>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
   </section>
@@ -192,7 +196,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.24 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.25 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -201,7 +205,7 @@ const fmt = (n, d=2) => n == null ? "–" : Number(n).toLocaleString("en-US",{mi
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 let last = null;
 const SYMS = ["XAUUSD","NASDAQ","NEWS"];
-const TFS = ["M5","M15","M30","H1"];
+const TFS = ["M1","M5","M15","M30","H1"];
 const [h1_, h2_] = location.hash.replace("#","").toUpperCase().split("-");
 let cur = SYMS.includes(h1_) ? h1_ : "XAUUSD";
 let curTF = TFS.includes(h2_) ? h2_ : "H1";
@@ -280,7 +284,7 @@ function fibBox(f){
   const st = FIBST[f.status] || {cls:"wait", t:esc(f.status)};
   if(!f.direction) return `<div class="note-box" style="margin-top:12px"><b>Setup Fib Retracement</b><div class="sub">${esc(f.note||"")}</div></div>`;
   const al = f.aligned_with_engine;
-  const alTxt = al==null ? "Sinyal utama: belum ada arah." : (al ? "Searah dengan sinyal utama." : "BERLAWANAN dengan sinyal utama.");
+  const alTxt = curTF==="M1" ? "" : al==null ? "Sinyal utama: belum ada arah." : (al ? "Searah dengan sinyal utama." : "BERLAWANAN dengan sinyal utama.");
   const rows = (f.levels||[]).map(x=>`<div class="cell"><small>${esc(x.level)} · ${esc(x.role)}</small><b>${fp(x.price)}</b></div>`).join("");
   const dead = f.status==="INVALID" || f.status==="EXTENDED";
   const qual = (f.struct?`<div class="sub" style="margin-top:6px">${f.struct.ok?"✓":"⚠"} ${esc(f.struct.text)}</div>`:"")
@@ -756,12 +760,13 @@ async function loadNews(force){
 
 function switchView(sym, tf){
   document.body.classList.toggle("onnews", sym==="NEWS");
+  document.body.classList.toggle("onm1", sym!=="NEWS" && tf==="M1");
   cur = sym; curTF = tf; seq++; last = null; lastConfirm = null; OFF = loadOff(sym); calMsg = ""; renderCal();
   $("bp").value = ls("bp_"+sym); $("sp").value = ls("sp_"+sym); $("brokercard").hidden = true;
   history.replaceState(null,"","#"+sym.toLowerCase()+"-"+tf.toLowerCase());
   document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===sym));
   document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===tf));
-  $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>';
+  $("main").innerHTML = '<div class="empty" id="loading">Mengambil data pasar…</div>'; $("m1view").innerHTML = tf==="M1" ? '<div class="card empty">Mengambil data M1…</div>' : "";
   ["sumcard","indcard","histcard"].forEach(i=>$(i).hidden=true);
   $("err").hidden = true; $("src").textContent = ""; $("stat").textContent = "menghubungkan…";
   if(sym==="NEWS"){ history.replaceState(null,"","#news"); seq++; $("newsview").innerHTML = '<div class="card empty">Mengambil jadwal dan riwayat berita…</div>'; loadNews(); return; }
@@ -792,9 +797,30 @@ function renderHistory(sig){
     `Dalam data ±${st.days} hari (${st.total} sinyal selesai): ${st.sl_first} kena SL sebelum TP1 (${Math.round(st.sl_first/st.total*100)}%), ${st.tp1plus} mencapai TP1 atau lebih (${st.tp3} sampai TP3), ${st.no_result} tanpa hasil (kedaluwarsa atau berbalik). Setelah SL, sinyal arah sama diblokir ${st.cooldown_bars} candle. Ini hasil data lalu, bukan jaminan ke depan.`;
   $("hist").innerHTML = rows.slice(0,10).map(x=>`<tr><td>${esc(x.time.slice(5,16).replace("T"," "))}</td><td class="${x.direction}">${x.direction}</td><td>${fp(x.entry)}</td><td>${esc(outText(x.outcome,x.tp_hit))}</td></tr>`).join("");
 }
+function renderM1(s){
+  showGuard(s.news_guard);
+  $("err").hidden = !s.error;
+  if(s.error) $("err").textContent = s.error;
+  const f = s.fib;
+  const head = `<div class="card"><h2>Fib M1 · ${esc(s.label||s.symbol)}</h2>
+    <p class="note">Hanya tampilan: tidak ada sinyal BUY/SELL dan tidak ada notifikasi di M1. Candle M1 berisik, jadi garis cepat berubah; pakai untuk melihat posisi harga terhadap garis Fib, bukan sebagai sinyal masuk.</p>
+    ${s.price!=null?`<div class="sub">Harga ${fp(s.price)} · candle tertutup terakhir ${esc((s.candle_time||"").slice(11,16))} UTC${s.market_closed?" · pasar tampaknya tutup":""}</div>`:""}</div>`;
+  const body = f && f.direction ? fibBoxes(f) : `<div class="card empty">${s.error?"":"Belum ada kaki Fib yang valid di M1 saat ini."}</div>`;
+  $("m1view").innerHTML = head + body;
+  $("src").textContent = s.source ? "Sumber: " + s.source : "";
+}
 async function load(){
   if(cur==="NEWS"){ await loadNews(); return; }
   const my = seq, sym = cur, tf = curTF;
+  if(tf==="M1"){
+    try{
+      const r = await fetch(`/api/signal?symbol=${sym}&tf=M1`,{cache:"no-store"}); const j = await r.json();
+      if(my!==seq) return;
+      last = j; lastFetch = Date.now(); renderM1(j);
+      $("dot").className = "dot"; $("stat").textContent = "Fib M1 diperbarui " + new Date().toLocaleTimeString("id-ID",{...WIB,hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":") + " WIB";
+    }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
+    return;
+  }
   try{
     const r = await fetch(`/api/signal?symbol=${sym}&tf=${tf}`,{cache:"no-store"}); const j = await r.json();
     if(my!==seq) return;               // pengguna sudah pindah tab
@@ -805,8 +831,9 @@ async function load(){
   }catch(e){ $("err").hidden=false; $("err").textContent="Tidak bisa menghubungi server aplikasi."; }
   tick();
 }
-async function cycle(){ await load(); setTimeout(cycle, cur==="NEWS" ? newsDelay : ((last && last.signal) ? 30000 : 5000)); }
+async function cycle(){ await load(); setTimeout(cycle, cur==="NEWS" ? newsDelay : curTF==="M1" ? 20000 : ((last && last.signal) ? 30000 : 5000)); }
 document.body.classList.toggle("onnews", cur==="NEWS");
+document.body.classList.toggle("onm1", cur!=="NEWS" && curTF==="M1");
 document.querySelectorAll(".tab").forEach(b=>b.setAttribute("aria-selected", b.dataset.sym===cur));
 document.querySelectorAll(".tf").forEach(b=>b.setAttribute("aria-selected", b.dataset.tf===curTF));
 $("bp").value = ls("bp_"+cur); $("sp").value = ls("sp_"+cur);
