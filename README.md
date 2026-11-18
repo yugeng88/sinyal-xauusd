@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.23 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.24 NEWS + FIB + SPREAD, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,15 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Yang baru di v19.24: spread broker dibaca otomatis dari MT5
+
+- EA versi baru **`SinyalMT5-spread.mq5`** mengirim selisih ask-bid tiap simbol. `SinyalMT5.mq5` yang lama **tidak diubah** dan tetap berfungsi; tanpa EA baru, spread tetap bisa diketik manual di kolom "Spread broker".
+- Aplikasi memakai spread dari MT5 bila kolom manual kosong (tertulis "dibaca dari MT5"); ketikan manual selalu menang.
+- Panel Manajemen risiko kini memasukkan spread ke jarak risiko (rugi bila SL = jarak SL + spread), sehingga lot yang disarankan sedikit lebih kecil.
+- Peringatan sudah ada: bila spread lebih dari 20% jarak SL, kartu menyarankan tidak masuk.
+- Cara pasang: salin `SinyalMT5-spread.mq5` ke MQL5/Experts, kompilasi (F7), ganti EA yang lama di chart dengan yang baru (input sama). **File EA ini belum dikompilasi di MetaEditor**; bila ada galat, laporkan apa adanya.
+- Spread yang tampil adalah spread saat EA terakhir mengirim data. Saat berita besar spread bisa melebar tiba-tiba.
 
 ## Yang baru di v19.23: notifikasi setelah harga berbalik dari titik balik
 

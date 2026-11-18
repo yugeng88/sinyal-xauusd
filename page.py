@@ -193,7 +193,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.23 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.24 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -431,13 +431,14 @@ function updateRisk(){
   if(!(bal>0 && pct>0 && pv>0)){ out.innerHTML = '<p class="note">Isi saldo, risiko %, dan nilai poin untuk menghitung lot.</p>'; return; }
   const cent = !!($("rkcent") && $("rkcent").checked), U = cent ? "USC" : "USD", X = cent ? 100 : 1;   // pv selalu USD; saldo dan hasil mengikuti satuan akun
   const balUsd = cent ? bal/100 : bal;
-  const amt = balUsd*pct/100, raw = amt/(LV.risk_points*pv), lots = Math.floor(raw*100+1e-9)/100;
-  const minLoss = 0.01*LV.risk_points*pv, minPct = minLoss/balUsd*100, over = minLoss > amt*1.0000001;
+  const spd = sig.broker_spread > 0 ? sig.broker_spread : 0, RP = LV.risk_points + spd;   // keluar di harga bid: spread ikut jadi risiko
+  const amt = balUsd*pct/100, raw = amt/(RP*pv), lots = Math.floor(raw*100+1e-9)/100;
+  const minLoss = 0.01*RP*pv, minPct = minLoss/balUsd*100, over = minLoss > amt*1.0000001;
   out.innerHTML = `<div class="grid" style="margin-top:8px">
     <div class="cell"><small>Risiko uang (${pct}% saldo)</small><b>${fmt(amt*X)} ${U}</b></div>
     <div class="cell"><small>Jarak SL${c && c.state==="CONFIRMED" ? " (dari M1)" : " (sinyal)"}</small><b>${fmt(LV.risk_points)}</b></div>
     <div class="cell"><small>Lot maksimum</small><b>${lots.toFixed(2)}</b></div>
-    <div class="cell"><small>Rugi bila SL</small><b class="sl">${fmt(lots*LV.risk_points*pv*X)} ${U}</b></div>
+    <div class="cell"><small>Rugi bila SL${spd>0?" (termasuk spread "+fmt(spd)+")":""}</small><b class="sl">${fmt(lots*RP*pv*X)} ${U}</b></div>
     <div class="cell"><small>Rugi bila SL di lot minimum 0,01</small><b class="${over?"sl":""}">${fmt(minLoss*X)} ${U} (${fmt(minPct,1)}% saldo)</b></div></div>
     ${over ? `<p class="note" style="color:var(--sell)"><b>Setup ini tidak muat di saldo Anda.</b> Lot terkecil 0,01 saja sudah merugi ${fmt(minLoss*X)} ${U} (${fmt(minPct,1)}% saldo) bila SL kena, sedangkan batas risiko Anda ${pct}% = ${fmt(amt*X)} ${U}. Lewati setup ini, naikkan saldo, atau cari instrumen/broker dengan nilai per poin yang lebih kecil. Jangan membulatkan lot ke atas.</p>` : ""}
     <p class="note">${pct>2?"Risiko di atas 2% per trade tergolong agresif. ":""}Nilai per poin per lot berbeda antar broker: cek spesifikasi kontrak simbol Anda. Lot dibulatkan ke bawah 0,01; periksa lot minimum dan margin di broker.</p>`;
@@ -469,9 +470,10 @@ function updateBroker(){
     out.innerHTML = '<p class="note">Belum ada level untuk dihitung ulang ('+(sig.market_closed?"pasar tampaknya tutup":"belum ada sinyal BUY atau SELL")+'). Kartu ini menghitung otomatis begitu sinyal BUY atau SELL muncul.</p>';
     return;
   }
-  const spRaw = parseFloat(String($("sp").value).replace(",","."));
+  const spMan = parseFloat(String($("sp").value).replace(",",".")), spAuto = sig.broker_spread;
+  const spRaw = (isFinite(spMan) && spMan>0) ? spMan : (spAuto>0 ? spAuto : NaN), spSrc = (isFinite(spMan) && spMan>0) ? "" : " (dibaca dari MT5)";
   const spHtml = (isFinite(spRaw) && spRaw>0) ? (()=>{ const pct = spRaw/L.risk_points*100;
-    return `<p class="${pct>20?"warn":"note"}" style="margin-top:10px">Spread ${fmt(spRaw)} poin = ${pct.toFixed(0)}% dari jarak SL (${fmt(L.risk_points)} poin).${pct>20?" Spread sebesar ini sangat mengurangi RR di timeframe kecil. Pertimbangkan tidak masuk.":""}</p>`; })() : "";
+    return `<p class="${pct>20?"warn":"note"}" style="margin-top:10px">Spread ${fmt(spRaw)} poin${spSrc} = ${pct.toFixed(0)}% dari jarak SL (${fmt(L.risk_points)} poin).${pct>20?" Spread sebesar ini sangat mengurangi RR di timeframe kecil. Pertimbangkan tidak masuk.":""}</p>`; })() : "";
   const raw = $("bp").value, p = parsePrice(raw, ref);
   if(!raw.trim()){ out.innerHTML = spHtml; return; }
   if(p==null){ out.innerHTML='<p class="note" style="color:var(--sell)">Angka belum terbaca. Contoh: 29011.91</p>'; return; }

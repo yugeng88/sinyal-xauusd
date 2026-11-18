@@ -28,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.23"
+VERSION = "19.24"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -1024,6 +1024,15 @@ def api_mt5():
         return jsonify(ok=False, error=data.scrub(f"{type(e).__name__}: {e}")), 500
 
 
+def _clean_spread(v):
+    """Spread dari EA (ask - bid, satuan harga). None bila tidak ada atau tidak masuk akal."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(x, 4) if math.isfinite(x) and 0 <= x < 1000 else None
+
+
 def mt5_ingest(j):
     t_now = time.time()
     sent = float(j.get("sent") or t_now)
@@ -1038,6 +1047,7 @@ def mt5_ingest(j):
             out["notes"].append(f"{sym_in}: simbol tidak dikenal (pakai XAUUSD atau NASDAQ)")
             continue
         broker = str(blk.get("broker") or sym)[:40]
+        spread = _clean_spread(blk.get("spread"))
         tfs = blk.get("tf") or {}
         if not tfs:
             continue
@@ -1057,6 +1067,8 @@ def mt5_ingest(j):
             sig = signals.analyze(df, f"MT5 {broker}", symbol=sym, label=data.SYMBOLS[sym]["label"], tf=tf)
             sig["tracking"] = signals.track(df, tf=tf, symbol=sym)
             sig.update(broker_native=True, broker_symbol=broker)
+            if spread is not None:
+                sig["broker_spread"] = spread          # selisih ask-bid broker, dalam poin harga
             sig = _jsonable(sig)
             rec = {"signal": sig, "summary": signals.summary_text(sig), "updated_at": now().isoformat()}
             with lock:
