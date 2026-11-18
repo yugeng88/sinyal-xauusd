@@ -377,7 +377,7 @@ def fib_message(label, tf, fs, off=0.0, invalid=False, plan=False):
         return (f"{label} {tf} · FIB {side} {fp(od['entry'], off)}",
                 f"{lines}{_fib_quality_line(fs)}Zona {fp(fs['zone']['from'], off)} - {fp(fs['zone']['to'], off)} (tarik {draw}: "
                 f"{fp(lg['start'], off)} -> {fp(lg['end'], off)})"
-                + (f"\nHarga sekarang {fp(live, off)}, belum di zona." if live is not None else "") +
+                + (f"\nHarga sudah berbalik dari titik balik dan menuju zona (posisi di fib {fs['ratio']:.2f}, harga {fp(live, off)})." if live is not None and fs.get("ratio") is not None else "") +
                 "\nPasang limit sekarang; batalkan bila ada kabar BATAL. Bukan saran investasi.")
     tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(fs["tp"]))
     rz = fs.get("rr_zone") or [fs["rr"], fs["rr"]]

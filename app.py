@@ -28,7 +28,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.22"
+VERSION = "19.23"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -200,6 +200,19 @@ def maybe_notify_exit(sym, tf, sig, click=None):
                 _sent_log.append({"jenis": "melemah", "target": f"{sym}:{tf}", "hasil": res})
 
 
+def _fib_plan_ready(fs):
+    """Rencana limit dikirim setelah harga berbalik dari titik balik (0.03) dan menuju zona entry: posisi di Fib
+    sudah >= FIB_NOTIFY_AFTER (0.3) dan candle tertutup terakhir bergerak ke arah zona. 0 = langsung saat setup muncul."""
+    try:
+        after = float(os.getenv("FIB_NOTIFY_AFTER", "0.3"))
+    except ValueError:
+        after = 0.3
+    if after <= 0:
+        return True
+    r = fs.get("ratio")
+    return r is not None and r >= after and bool(fs.get("toward_zone", True))
+
+
 def maybe_notify_fib(sym, tf, sig, click=None):
     """Notifikasi Fib (tanpa menunggu konfirmasi): rencana BUY/SELL LIMIT + SL (dari Order Block) langsung saat setup
     searah kaki terakhir muncul dan harga belum di zona; lalu saat harga masuk zona; lalu kabar batal bila
@@ -221,7 +234,7 @@ def maybe_notify_fib(sym, tf, sig, click=None):
         if not fs.get("direction"):
             continue
         base = f"fib:{sym}:{tf}:{fs['direction']}:{fs['leg']['start_time']}:{fs['leg']['end_time']}"
-        if fs is f and fs["status"] == "WAIT_PULLBACK" and fs.get("order") and \
+        if fs is f and fs["status"] == "WAIT_PULLBACK" and fs.get("order") and _fib_plan_ready(fs) and \
                 os.getenv("FIB_NOTIFY_EARLY", "1").lower() not in ("0", "off", "false", "no"):
             title, msg = notify.fib_message(sig["label"], tf, fs, off, plan=True)
             r = notify.deliver(base + ":plan", title, msg, 4, ["triangular_ruler"], click or app_url())

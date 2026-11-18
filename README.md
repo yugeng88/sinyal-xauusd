@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.22 NEWS + FIB, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.23 NEWS + FIB, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -7,7 +7,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
-## Yang baru di v19.22: kartu Fib hijau saat terbentuk + perbaikan Order Block
+## Yang baru di v19.23: notifikasi setelah harga berbalik dari titik balik
+
+- Rencana BUY/SELL LIMIT sekarang dikirim **setelah harga berbalik dari titik balik (0.03) dan menuju zona entry**: posisi harga di Fib sudah >= `FIB_NOTIFY_AFTER` (bawaan 0.3) dan candle tertutup terakhir bergerak ke arah zona. Sebelumnya dikirim begitu setup muncul.
+- `FIB_NOTIFY_AFTER=0` mengembalikan perilaku lama (langsung saat setup muncul); naikkan (mis. 0.4) agar lebih lambat tapi lebih dekat ke zona. Notifikasi masuk zona dan BATAL tidak berubah.
+- Bukan saran investasi; belum ada backtest.
+
+## Sebelumnya di v19.22: kartu Fib hijau saat terbentuk + perbaikan Order Block
 
 - **Latar hijau:** kartu Fib berwarna hijau saat setup aktif (MENUNGGU PULLBACK atau DI ZONA ENTRY); saat DI ZONA ENTRY borderan lebih tebal. Setup BATAL/SUDAH LEWAT tetap dilipat dan netral; LEWAT ENTRY tetap kuning.
 - **Perbaikan OB:** candle yang hanya menyentuh tepi zona (irisan < 30% dari yang lebih kecil antara tinggi candle dan zona) tidak lagi dianggap OB, begitu juga candle lebih tinggi dari `FIB_OB_MAX_ATR` (2.0) x ATR (itu impuls, bukan OB). SL OB minimal `FIB_OB_MIN_RISK_ATR` (0.3) x ATR dari entry, tetapi tidak lebih lebar dari SL Fib 0.99. Sebelumnya bisa muncul SL 1.5 poin dengan RR 1:30+.
