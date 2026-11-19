@@ -22,9 +22,9 @@ import numpy as np
 import pandas as pd
 
 # Level persis seperti di pengaturan pengguna (urutan tampil dari target jauh ke SL).
-LEVELS = (-0.99, -0.66, -0.33, 0.03, 0.63, 0.78, 0.99)
+LEVELS = (-0.99, -0.66, -0.33, 0.03, 0.63, 0.705, 0.78, 0.99)
 LEVEL_ROLES = {-0.99: "TP3", -0.66: "TP2", -0.33: "TP1", 0.03: "titik balik / pullback (ujung kaki)",
-               0.63: "area entry (tepi atas)", 0.78: "area entry (tepi dalam)", 0.99: "stop loss"}
+               0.63: "area entry (tepi atas)", 0.705: "tengah area entry (OTE)", 0.78: "area entry (tepi dalam)", 0.99: "stop loss"}
 
 
 def _floats(raw, default):
@@ -50,14 +50,17 @@ def config():
         pivot = int(float(os.getenv("FIB_PIVOT", "10")))
         min_atr = float(os.getenv("FIB_MIN_ATR", "3"))
         max_age = int(float(os.getenv("FIB_MAX_AGE_BARS", "80")))
+        lookback = int(float(os.getenv("FIB_LEG_LOOKBACK", "500")))
     except ValueError:
         entry, sl, buf, pivot, min_atr, max_age, turn, ob_buf = 0.78, 0.99, 0.0, 10, 3.0, 80, 0.03, 0.1
-        ob_max, ob_min_risk = 2.0, 0.3
+        ob_max, ob_min_risk, lookback = 2.0, 0.3, 500
     if len(tp) != 3 or list(tp) != sorted(tp, reverse=True):   # harus 3 TP, makin jauh makin kecil (negatif)
         tp = (-0.33, -0.66, -0.99)
     return {"enabled": os.getenv("FIB_ENABLED", "1").lower() not in ("0", "off", "false", "no"),
             "zone": (zone[0], zone[-1]), "entry": entry, "turn": turn, "ob": os.getenv("FIB_OB", "1").lower() not in ("0", "off", "false", "no"), "ob_buffer_atr": ob_buf, "ob_max_atr": ob_max, "ob_min_risk_atr": ob_min_risk, "div": os.getenv("FIB_DIV", "1").lower() not in ("0", "off", "false", "no"), "sl": sl, "sl_buffer_atr": buf, "tp": tp,
-            "pivot": max(1, pivot), "min_atr": min_atr, "max_age": max_age}
+            "pivot": max(1, pivot), "min_atr": min_atr, "max_age": max_age,
+            "leg_mode": "last" if os.getenv("FIB_LEG_MODE", "origin").strip().lower() == "last" else "origin",
+            "leg_lookback": max(20, lookback)}
 
 
 def _price(L, start, end):
@@ -114,7 +117,27 @@ def find_leg(df, atr_v, cfg=None):
         end_v = float(h[end_i]) if up else float(l[end_i])
         if (n - 1 - end_i) > cfg["max_age"]:
             return None
-        prev_a = zz[j - 3][2] if j >= 3 else None            # pivot sejenis sebelum titik awal
+        ja = j - 1
+        if cfg.get("leg_mode", "origin") == "origin":
+            # Cara tarik manual: mulai dari dasar (BUY) / puncak (SELL) ayunan, bukan dari higher low / lower high terakhir.
+            # Mundur selama belum ada pivot yang menembus ujung kaki; ambil pivot awal paling ekstrem.
+            start_v = float(a[2])
+            for m in range(j - 2, -1, -1):
+                p = zz[m]
+                if b[0] - p[0] > cfg.get("leg_lookback", 500):
+                    break
+                if up:
+                    if p[1] == "H" and p[2] > end_v:
+                        break
+                    if p[1] == "L" and p[2] < start_v:
+                        start_v, ja = float(p[2]), m
+                else:
+                    if p[1] == "L" and p[2] < end_v:
+                        break
+                    if p[1] == "H" and p[2] > start_v:
+                        start_v, ja = float(p[2]), m
+            a = zz[ja]
+        prev_a = zz[ja - 2][2] if ja >= 2 else None          # pivot sejenis sebelum titik awal
         prev_b = zz[j - 2][2] if j >= 2 else None            # pivot sejenis sebelum titik ujung
         lab_a = _struct_label(a[1], float(a[2]), prev_a)
         lab_b = _struct_label(b[1], end_v, prev_b)

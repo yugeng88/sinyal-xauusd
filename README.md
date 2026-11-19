@@ -12,6 +12,8 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 - Aturan lama memakai posisi di skala Fib >= 0.3 (kira-kira 45% menuju zona). Aturan baru: **progres = (posisi Fib - 0.03) / (0.63 - 0.03)**. Sinyal rencana BUY/SELL LIMIT keluar saat progres >= **30%** dari titik balik (0.03) menuju tepi dekat zona entry (0.63), dan candle tertutup terakhir masih bergerak ke zona.
 - Env baru `FIB_NOTIFY_PROGRESS` (bawaan 0.30; 0 = langsung saat setup muncul). `FIB_NOTIFY_AFTER` tidak dipakai lagi. Notifikasi menulis persen progres.
 - Notifikasi Fib kini juga untuk **M5** (bawaan `FIB_NOTIFY_TFS=M5,M15,M30,H1`). Jika di Vercel/VPS Anda sudah menyetel `FIB_NOTIFY_TFS` sendiri, ubah nilainya agar memuat M5.
+- **Kaki Fib v19.28:** bawaan sekarang `FIB_LEG_MODE=origin`: BUY ditarik dari **dasar ayunan** ke high (SELL dari puncak ke low), sama seperti tarikan manual. Mode lama (`last`) menarik dari higher low / lower high terakhir sehingga kaki lebih pendek, SL lebih dekat, dan zona entry bergeser. Mundur mencari dasar dibatasi `FIB_LEG_LOOKBACK` (bawaan 500 candle) dan berhenti di pivot yang menembus ujung kaki.
+- **v19.29:** garis tengah **0.705** (OTE, garis cyan di TradingView Anda / "- E" di MT5) ikut ditampilkan di daftar level. Zona entry tetap 0.63 sampai 0.78. Cocok dengan gambar TradingView: low 3719.76 -> high 3758.43.
 - Level harga Fib tidak berubah; sudah dicocokkan dengan gambar MT5 Anda (low 3719.49 -> high 3733.22): 3724.57 / 3722.51 / 3719.63 / 3732.81 / 3737.75 / 3742.28 / 3746.81.
 
 ## Yang baru di v19.25: kolom M1 (hanya Fib, tanpa notifikasi)
