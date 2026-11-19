@@ -273,6 +273,9 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
 
     # Rasio harga sekarang pada garis fib (0 = ujung kaki, 1 = awal kaki, >1 = lewat SL).
     ratio = round(float((end - live_price) / (end - start)), 3)
+    # Progres menuju entry: 0% = tepat di titik balik (0.03), 100% = di tepi dekat zona entry (0.63). Dipakai notifikasi 30%.
+    z_near = min(cfg["zone"])
+    progress = round(float((ratio - cfg["turn"]) / (z_near - cfg["turn"])), 3) if z_near != cfg["turn"] else None
     sl_L = cfg["sl"]
     beyond = lambda x: (x - end) / (start - end) >= sl_L     # noqa: E731
     broke = bool(len(closes) and any(beyond(x) for x in closes)) or beyond(live_price)
@@ -323,7 +326,7 @@ def _build(direction, lo, hi, i_lo, i_hi, df, atr_v, live_price, engine_directio
                 "start_time": times.iloc[i0].isoformat(), "end_time": times.iloc[i1].isoformat(),
                 "type": word, "draw": "low -> high" if direction == "BUY" else "high -> low", "draw_label": draw_label,
                 "start_label": hi_lab if direction == "SELL" else lo_lab, "end_label": lo_lab if direction == "SELL" else hi_lab},
-        "ratio": ratio, "toward_zone": bool(df["close"].iloc[-1] < df["close"].iloc[-2]) if direction == "BUY" else bool(df["close"].iloc[-1] > df["close"].iloc[-2]),
+        "ratio": ratio, "progress": progress, "toward_zone": bool(df["close"].iloc[-1] < df["close"].iloc[-2]) if direction == "BUY" else bool(df["close"].iloc[-1] > df["close"].iloc[-2]),
         "zone": {"from": px(z_lo), "to": px(z_hi)},
         "entry": entry, "stop_loss": sl_price, "tp": tps, "rr": rr, "rr_zone": [rr_near, rr_far], "ob": ob, "order": order, "struct": struct, "div": div, "live_price": round(float(live_price), 2),
         "turn": px(cfg["turn"]), "risk_points": round(risk, 2),

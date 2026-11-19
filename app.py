@@ -202,16 +202,17 @@ def maybe_notify_exit(sym, tf, sig, click=None):
 
 
 def _fib_plan_ready(fs):
-    """Rencana limit dikirim setelah harga berbalik dari titik balik (0.03) dan menuju zona entry: posisi di Fib
-    sudah >= FIB_NOTIFY_AFTER (0.3) dan candle tertutup terakhir bergerak ke arah zona. 0 = langsung saat setup muncul."""
+    """Rencana limit dikirim saat harga sudah bergerak >= FIB_NOTIFY_PROGRESS (bawaan 0.30 = 30%) dari titik balik
+    (Fib 0.03) menuju tepi dekat zona entry (Fib 0.63), dan candle tertutup terakhir masih bergerak ke arah zona.
+    Contoh BUY: titik balik 3732.81, tepi zona 3724.57 -> sinyal keluar di harga <= 3730.34. 0 = langsung saat setup muncul."""
     try:
-        after = float(os.getenv("FIB_NOTIFY_AFTER", "0.3"))
+        need = float(os.getenv("FIB_NOTIFY_PROGRESS", "0.30"))
     except ValueError:
-        after = 0.3
-    if after <= 0:
+        need = 0.30
+    if need <= 0:
         return True
-    r = fs.get("ratio")
-    return r is not None and r >= after and bool(fs.get("toward_zone", True))
+    p = fs.get("progress")
+    return p is not None and p >= need and bool(fs.get("toward_zone", True))
 
 
 def maybe_notify_fib(sym, tf, sig, click=None):
@@ -220,7 +221,7 @@ def maybe_notify_fib(sym, tf, sig, click=None):
     sebelumnya sudah diberitahukan. Masing-masing sekali per pasangan titik jangkar dan arah."""
     if os.getenv("FIB_NOTIFY", "1").lower() in ("0", "off", "false", "no"):
         return
-    tfs = [x.strip().upper() for x in os.getenv("FIB_NOTIFY_TFS", "M15,M30,H1").split(",")]
+    tfs = [x.strip().upper() for x in os.getenv("FIB_NOTIFY_TFS", "M5,M15,M30,H1").split(",")]
     f = sig.get("fib") or {}
     if tf not in tfs or not f.get("direction") or sig.get("market_closed"):
         return

@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.25 NEWS + FIB + SPREAD, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.26 NEWS + FIB + SPREAD, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -6,6 +6,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
+
+## Perbaikan v19.26: sinyal Fib keluar saat harga sudah 30% menuju entry
+
+- Aturan lama memakai posisi di skala Fib >= 0.3 (kira-kira 45% menuju zona). Aturan baru: **progres = (posisi Fib - 0.03) / (0.63 - 0.03)**. Sinyal rencana BUY/SELL LIMIT keluar saat progres >= **30%** dari titik balik (0.03) menuju tepi dekat zona entry (0.63), dan candle tertutup terakhir masih bergerak ke zona.
+- Env baru `FIB_NOTIFY_PROGRESS` (bawaan 0.30; 0 = langsung saat setup muncul). `FIB_NOTIFY_AFTER` tidak dipakai lagi. Notifikasi menulis persen progres.
+- Notifikasi Fib kini juga untuk **M5** (bawaan `FIB_NOTIFY_TFS=M5,M15,M30,H1`). Jika di Vercel/VPS Anda sudah menyetel `FIB_NOTIFY_TFS` sendiri, ubah nilainya agar memuat M5.
+- Level harga Fib tidak berubah; sudah dicocokkan dengan gambar MT5 Anda (low 3719.49 -> high 3733.22): 3724.57 / 3722.51 / 3719.63 / 3732.81 / 3737.75 / 3742.28 / 3746.81.
 
 ## Yang baru di v19.25: kolom M1 (hanya Fib, tanpa notifikasi)
 
@@ -87,7 +94,7 @@ Blok `fib` baru di setiap hasil analisis (`fib_setup.py`) dan kartu **Setup Fib 
 
 ### Notifikasi Fib (EA MT5 tidak diubah)
 
-- **Notifikasi:** pesan "FIB BUY/SELL DI ZONA ENTRY" (zona, entry limit, SL, TP, RR) sekali per pasangan titik jangkar dan arah, dan "FIB ... BATAL" bila harga melewati 0.99 setelah zona sempat diberitahukan. Hanya dari data segar dan pasar buka. Env: `FIB_NOTIFY` (1/off), `FIB_NOTIFY_TFS` (M15,M30,H1).
+- **Notifikasi:** pesan "FIB BUY/SELL DI ZONA ENTRY" (zona, entry limit, SL, TP, RR) sekali per pasangan titik jangkar dan arah, dan "FIB ... BATAL" bila harga melewati 0.99 setelah zona sempat diberitahukan. Hanya dari data segar dan pasar buka. Env: `FIB_NOTIFY` (1/off), `FIB_NOTIFY_TFS` (M5,M15,M30,H1).
 
 ## Yang baru di v19.13: Retail Sales jadi berita penuh (dengan sinyal Entry/SL/TP)
 
