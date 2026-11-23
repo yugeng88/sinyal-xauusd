@@ -14,7 +14,7 @@ input string AppUrl    = "https://sinyal-xauusd.vercel.app"; // Alamat aplikasi 
 input string Kunci     = "";       // Kunci: isi dengan CRON_SECRET dari Vercel
 input string SimbolXAU = "XAUUSD"; // Nama simbol emas di Market Watch (kosongkan bila tidak dipakai)
 input string SimbolNAS = "NAS100"; // Nama simbol NAS100 di Market Watch (kosongkan bila tidak dipakai)
-input int    JumlahBar = 300;      // Jumlah candle per timeframe (minimal 150)
+input int    JumlahBar = 1000;     // Jumlah candle per timeframe (minimal 150)
 
 string          KEYS[2] = {"XAUUSD", "NASDAQ"};    // nama instrumen di aplikasi
 string          SYMS[2];                           // nama simbol di broker

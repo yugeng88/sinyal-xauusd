@@ -175,25 +175,87 @@ def deliver(key, title, message, priority=3, tags=(), click=None):
 
 
 # -------------------------------------------------------------------- kirim
+_cool = {"ntfy": 0.0}      # waktu (epoch) sampai kapan ntfy sedang membatasi kita (HTTP 429)
+_log = []                  # riwayat pengiriman terakhir (memori)
+LOG_MAX = 20
+
+
+def _log_add(title, results):
+    """Catat hasil kirim (berhasil/gagal + alasan) supaya bisa dilihat di /api/notif."""
+    row = {"t": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S") + " UTC", "judul": str(title)[:70],
+           "hasil": [{"kanal": r["channel"], "ok": r["ok"], "galat": r.get("error")} for r in results]}
+    _log.append(row)
+    del _log[:-LOG_MAX]
+    if _redis():
+        try:
+            _rcall(["SET", "sinyal:sendlog", json.dumps(_log[-LOG_MAX:]), "EX", 7 * 86400])
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def recent_log():
+    """Riwayat pengiriman terakhir. Bila memori kosong (instance serverless baru), baca dari Redis."""
+    if _log:
+        return list(_log)
+    if _redis():
+        try:
+            raw = _rcall(["GET", "sinyal:sendlog"])
+            return json.loads(raw) if raw else []
+        except Exception:  # noqa: BLE001
+            return []
+    return []
+
+
+def _ntfy_send(title, message, priority, tags, click):
+    """Kirim ke ntfy. Galat dilaporkan lengkap (kode HTTP + isi respons), 429/5xx dicoba ulang sekali."""
+    if time.time() < _cool["ntfy"]:
+        return {"channel": "ntfy", "ok": False,
+                "error": f"ntfy membatasi pengiriman (HTTP 429), dicoba lagi {int(_cool['ntfy'] - time.time())} dtk lagi"}
+    topic = os.getenv("NTFY_TOPIC", "").strip()
+    server = (os.getenv("NTFY_SERVER", "") or "https://ntfy.sh").strip().rstrip("/")
+    body = {"topic": topic, "title": title, "message": message, "priority": int(priority), "tags": list(tags)}
+    if click:
+        body["click"] = click
+    headers = {"Content-Type": "application/json"}
+    auth = None
+    if os.getenv("NTFY_TOKEN", "").strip():
+        headers["Authorization"] = "Bearer " + os.getenv("NTFY_TOKEN").strip()
+    elif os.getenv("NTFY_USER", "").strip():
+        auth = (os.getenv("NTFY_USER").strip(), os.getenv("NTFY_PASS", ""))
+    last = None
+    for attempt in (1, 2):
+        try:
+            r = requests.post(server, json=body, headers=headers, auth=auth, timeout=TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            last = {"channel": "ntfy", "ok": False, "error": _scrub(f"{type(e).__name__}: {e}")[:160]}
+        else:
+            if r.status_code == 200:
+                return {"channel": "ntfy", "ok": True, "error": None}
+            detail = ""
+            try:
+                detail = (r.json().get("error") or "")[:100]
+            except Exception:  # noqa: BLE001
+                detail = (r.text or "")[:100]
+            last = {"channel": "ntfy", "ok": False, "error": _scrub(f"HTTP {r.status_code} {detail}".strip())}
+            if r.status_code == 429:
+                try:
+                    wait = int(float(r.headers.get("Retry-After", "") or 60))
+                except ValueError:
+                    wait = 60
+                _cool["ntfy"] = time.time() + min(max(wait, 10), 300)
+                return last                                    # jangan menghajar server saat dibatasi
+            if r.status_code not in (500, 502, 503, 504):
+                return last                                    # 401/403/404 dst: bukan masalah sementara
+        if attempt == 1:
+            time.sleep(1.5)
+    return last
+
+
 def send(title, message, priority=3, tags=(), click=None):
     """Kirim ke semua kanal yang aktif. Kembalikan hasil per kanal (galat sudah disamarkan)."""
     out = []
-    topic = os.getenv("NTFY_TOPIC", "").strip()
-    if topic:
-        try:
-            server = (os.getenv("NTFY_SERVER", "") or "https://ntfy.sh").strip().rstrip("/")
-            body = {"topic": topic, "title": title, "message": message,
-                    "priority": int(priority), "tags": list(tags)}
-            if click:
-                body["click"] = click
-            headers = {"Content-Type": "application/json"}
-            if os.getenv("NTFY_TOKEN", "").strip():
-                headers["Authorization"] = "Bearer " + os.getenv("NTFY_TOKEN").strip()
-            r = requests.post(server, json=body, headers=headers, timeout=TIMEOUT)
-            out.append({"channel": "ntfy", "ok": r.status_code == 200,
-                        "error": None if r.status_code == 200 else f"HTTP {r.status_code}"})
-        except Exception as e:  # noqa: BLE001
-            out.append({"channel": "ntfy", "ok": False, "error": _scrub(e)})
+    if os.getenv("NTFY_TOPIC", "").strip():
+        out.append(_ntfy_send(title, message, priority, tags, click))
     tok, chat = os.getenv("TELEGRAM_BOT_TOKEN", "").strip(), os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if tok and chat:
         try:
@@ -204,6 +266,10 @@ def send(title, message, priority=3, tags=(), click=None):
                         "error": None if r.status_code == 200 else f"HTTP {r.status_code}"})
         except Exception as e:  # noqa: BLE001
             out.append({"channel": "telegram", "ok": False, "error": _scrub(e)})
+    try:
+        _log_add(title, out)
+    except Exception:  # noqa: BLE001  - pencatatan tidak boleh menggagalkan notifikasi
+        pass
     return out
 
 

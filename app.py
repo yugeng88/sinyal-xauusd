@@ -29,7 +29,7 @@ import notify
 import page
 import signals
 
-VERSION = "19.29"
+VERSION = "19.30"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -970,6 +970,38 @@ def api_cron():
         return jsonify(error=data.scrub(f"{type(e).__name__}: {e}")), 500
 
 
+@app.get("/api/notif")
+def api_notif():
+    """Diagnosis notifikasi (butuh ?key=CRON_SECRET): kanal, EA MT5, cron, dan riwayat kirim terakhir beserta alasan gagal."""
+    secret = os.getenv("CRON_SECRET", "").strip()
+    if not secret or not hmac.compare_digest((request.args.get("key") or "").encode(), secret.encode()):
+        return jsonify(error="kunci salah atau CRON_SECRET belum diisi"), 403
+    t = time.time()
+    topic = os.getenv("NTFY_TOPIC", "").strip()
+    alive = {k: round(t - v) for k, v in mt5_alive_map(force=True).items()}
+    log = notify.recent_log()
+    lc = last_cron()
+    hints = []
+    if not topic:
+        hints.append("NTFY_TOPIC belum diisi: tidak ada notifikasi yang bisa dikirim.")
+    if not alive:
+        hints.append("EA MT5 tidak mengirim data (>3 menit). Cek MT5 terbuka, EA menyala, dan jendela WebRequest.")
+    if not lc and not alive:
+        hints.append("Cron belum pernah jalan: cek cron-job.org (tiap menit) atau INTERNAL_CRON=1 di VPS.")
+    fails = [r for r in log[-5:] if any(not h["ok"] for h in r["hasil"])]
+    if fails:
+        hints.append("Pengiriman terakhir ke ntfy GAGAL, lihat 'galat' di riwayat (429 = dibatasi ntfy.sh, 401/403 = token/topik).")
+    if not log:
+        hints.append("Belum ada riwayat kirim di instance ini. Panggil /api/cron?key=...&test=1 lalu cek lagi.")
+    return jsonify(version=VERSION, channels=notify.channels(),
+                   ntfy_server=(os.getenv("NTFY_SERVER", "") or "https://ntfy.sh"),
+                   ntfy_topic=(topic[:4] + "..." + f"({len(topic)} huruf)") if topic else None,
+                   redis=bool(notify._redis()), require_m1=REQUIRE_M1,
+                   targets=[f"{a}:{b}" for a, b in parse_targets(os.getenv("NOTIFY_TARGETS"))],
+                   mt5_detik_sejak_kiriman=alive, cron_terakhir=lc, ntfy_cooldown_detik=max(0, round(notify._cool["ntfy"] - t)),
+                   riwayat_kirim=log[::-1], petunjuk=hints)
+
+
 # ------------------------------------------------------------------ MT5 (EA)
 MT5_FRESH = 180               # detik: kiriman EA lebih tua dari ini = MT5 dianggap mati, kembali ke sumber lama
 _mt5 = {"alive": {}, "alive_read": 0.0, "sig": {}, "cfm": {}, "cfm_state": {}}
@@ -1056,7 +1088,7 @@ _mt5_candles = {}      # (instrumen, tf) -> {"t": waktu kirim, "rows": [[epoch,o
 
 def _store_candles(sym, tf, df):
     """Simpan candle broker mentah supaya bisa dibaca aplikasi RSI (GET /api/candles)."""
-    d = df.tail(300)
+    d = df.tail(1000)
     rows = [[int(t.timestamp()), float(o), float(h), float(l), float(c)]
             for t, o, h, l, c in zip(d["time"], d["open"], d["high"], d["low"], d["close"])]
     rec = {"t": time.time(), "broker": str(df.attrs.get("broker", "")), "rows": rows}
