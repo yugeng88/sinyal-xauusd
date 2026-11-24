@@ -307,9 +307,45 @@ def confirm_message(label, tf, a, c, off=0.0, warn=None):
             + (f"⚠ {warn}\n" if warn else "") + "Jangan mengejar jika harga sudah menjauh. Bukan saran investasi.")
 
 
+def momentum_message(label, res, off=0.0, in_zone=False):
+    """NEWS MOMENTUM: rencana LIMIT di pullback setelah gerakan mendadak (eksperimental)."""
+    lv, imp, ev = res["levels"], res["impulse"], res.get("evidence") or {}
+    d = res["plan_direction"]
+    order = "BUY LIMIT" if d == "BUY" else "SELL LIMIT"
+    tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
+    z = res["zone"]
+    why = "; ".join(res.get("reasons") or [])
+    warn = "".join(f"\n⚠ {w}" for w in (res.get("warnings") or [])[:2])
+    head = "HARGA DI ZONA ENTRY" if in_zone else "rencana baru"
+    return (f"{label} · NEWS MOMENTUM {d} ({'zona' if in_zone else 'eksperimental'})",
+            f"{head}: impuls {imp['direction']} {imp['ratio']}x ATR M5 ({imp['pct']}% dalam {imp['bars'] * 5} menit).\n"
+            f"{order} {fp(lv['entry'], off)} (zona {fp(z[0], off)}-{fp(z[1], off)}) | SL {fp(lv['stop_loss'], off)} | risiko {lv['risk_points']:.2f}\n"
+            f"{tps}\nBukti {ev.get('n', 0)}/{ev.get('of', 3)} ({ev.get('label', '-')}): {why}{warn}\n"
+            "Berita terbit setelah harga bergerak: jangan mengejar, batal bila harga menembus awal impuls. Bukan saran investasi.")
+
+
+def momentum_cancel_message(label, res):
+    imp = res.get("impulse") or {}
+    return (f"{label} · NEWS MOMENTUM BATAL",
+            f"{res.get('label', 'rencana batal')}. Pullback menembus batas atau harga kembali ke awal impuls "
+            f"({imp.get('origin')}). Hapus order limit yang belum terisi.")
+
+
+NOW_MIN = 10          # menit: pada jendela ini sinyal pra-news bertuliskan BUY NOW / SELL NOW
+
+
+def pre_now():
+    """NEWS_PRE_NOW=0 mematikan tahap 10 menit dan tulisan NOW (pra-news kembali seperti v19.30)."""
+    return os.getenv("NEWS_PRE_NOW", "1").strip().lower() not in ("0", "off", "false", "no")
+
+
 def news_pre_message(ev, sig, minutes_left, off=0.0, analysis=None):
     head = f"{ev['short']} {minutes_left:.0f} menit lagi · {wib(ev['t0'])}"
     lines = []
+    now_win = sig["direction"] in ("BUY", "SELL") and 0 < minutes_left <= NOW_MIN and pre_now()
+    if now_win:
+        head += f" · {sig['direction']} NOW"
+        lines.append("Arah ini taruhan pada angka rilis, bukan konfirmasi harga.")
     if sig["direction"] in ("BUY", "SELL"):
         lv = sig.get("levels")
         lines.append(f"Sinyal pra-news: {sig['direction']} ({(sig.get('strength') or '').lower()}, kekuatan bukti {sig['confidence']}%)")

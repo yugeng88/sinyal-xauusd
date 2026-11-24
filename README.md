@@ -7,6 +7,28 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
+## Yang baru di v19.32: BUY NOW / SELL NOW 10 dan 5 menit sebelum berita terjadwal (hanya tab NEWS dan notifikasi news)
+
+- Notifikasi pra-news sekarang ada tiga tahap: jendela awal (60 menit), **10 menit**, dan **5 menit** sebelum rilis. Pada tahap 10 dan 5 menit, bila arah BUY/SELL ada, judulnya memuat **BUY NOW** atau **SELL NOW**; kartu sinyal di tab NEWS juga bertuliskan sama.
+- Arah hanya muncul bila sudah lolos gerbang analisis lengkap yang sudah ada (`NEWS_REQUIRE_ANALYSIS`, `NEWS_MIN_ASPECTS`). Bila tidak ada arah, notifikasi tetap hanya memuat zona breakout dan tidak ada tulisan NOW.
+- Pesan NOW menambahkan peringatan bahwa arah ini taruhan pada angka rilis, bukan konfirmasi harga. Spread melebar saat rilis. Cek tabel hasil benar/salah di tab NEWS sebelum mengandalkannya.
+- `NEWS_PRE_NOW=0` mematikan tahap 10 menit dan tulisan NOW (kembali seperti v19.30). Sinyal dan arah pra-news tidak diubah.
+- Kartu News momentum (v19.31) dipindah ke tab NEWS saja; tab XAUUSD, NASDAQ, dan M1 kembali persis seperti v19.30.
+
+## Yang baru di v19.31: NEWS MOMENTUM (sinyal saat pasar bergerak mendadak karena berita tak terjadwal)
+
+Untuk gerakan seperti emas dan Nasdaq naik 2-3% setelah aksi jual besar (relief rally). Modul: `news_momentum.py`.
+
+- **Pemicu = gerakan harga**, bukan judul berita: impuls M5 minimal `MOM_ATR` (2,5) x ATR yang selesai dalam 60 menit.
+- **Entry = BUY/SELL LIMIT di pullback** 38,2-61,8% dari impuls (limit di 50%). SL di luar awal impuls, TP memakai RR profil instrumen.
+- **Syarat konfirmasi berita**: instrumen lain bergerak searah, atau skor judul (RSS Google News, 6 jam terakhir) searah. Judul yang jelas berlawanan menahan sinyal. Searah tren H1 tidak wajib (rebound memang melawan tren) tetapi jadi peringatan.
+- **Bukti 0-3** (lintas aset, judul, tren H1) menggantikan persen keyakinan. Itu bukan probabilitas profit.
+- Batal bila harga kembali ke awal impuls atau pullback lebih dalam dari 78,6%; kedaluwarsa 90 menit setelah puncak. Notifikasi: rencana baru, harga masuk zona, dan batal (hanya bila rencana pernah dikirim).
+- Kartu "News momentum" muncul **hanya di tab NEWS** (XAUUSD dan NASDAQ), hanya saat ada impuls; tab lain tidak berubah. API: `/api/momentum?symbol=XAUUSD`.
+- Mengikuti penahan kalender (`NEWS_GUARD_BLOCK`). Bekerja dari candle M5 MT5 (lewat `/api/mt5`) atau dari cron.
+- Pengaturan: `NEWS_MOMENTUM=0` mematikan seluruhnya, `MOM_NOTIFY=0` hanya mematikan notifikasi. Lainnya ada di `.env.example`.
+- **Batasan jujur**: berita tidak bisa di-backtest (RSS hanya menyimpan judul beberapa hari), kamus judul tidak menangani negasi, dan pada berita besar spread melebar sehingga limit bisa tidak terisi. Pakai di akun demo 2-4 minggu sebelum percaya. Bukan saran investasi.
+
 ## Perbaikan v19.26: sinyal Fib keluar saat harga sudah 30% menuju entry
 
 - Aturan lama memakai posisi di skala Fib >= 0.3 (kira-kira 45% menuju zona). Aturan baru: **progres = (posisi Fib - 0.03) / (0.63 - 0.03)**. Sinyal rencana BUY/SELL LIMIT keluar saat progres >= **30%** dari titik balik (0.03) menuju tepi dekat zona entry (0.63), dan candle tertutup terakhir masih bergerak ke zona.

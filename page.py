@@ -90,6 +90,7 @@ body.onm1 #main, body.onm1 #sumcard, body.onm1 #indcard, body.onm1 #histcard, bo
 #m1view{display:none} body.onm1 #m1view{display:grid;gap:14px}
 body.onnews .tfs, body.onnews #main, body.onnews #sumcard, body.onnews #indcard, body.onnews #histcard, body.onnews #brokercard, body.onnews #riskcard{display:none !important}
 #newsview{display:none} body.onnews #newsview{display:grid;gap:14px}
+#momview{display:none} body.onnews #momview{display:grid;gap:14px}
 .evs{display:flex;flex-wrap:wrap;gap:6px}
 .ev{background:var(--panel);color:var(--mute);border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:600 12px var(--font);cursor:pointer;text-align:left;line-height:1.35}
 .ev.sel{color:var(--text);border-color:#4a5688;background:#171c35}.ev small{display:block;font-weight:500;color:var(--mute)}
@@ -150,6 +151,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
   <div id="err" class="card error" hidden></div>
   <div id="newsguard" class="guard" hidden></div>
   <section id="newsview"></section>
+  <section id="momview"></section>
   <section id="m1view"></section>
   <section class="card" id="main">
     <div class="empty" id="loading">Mengambil data pasar…</div>
@@ -647,6 +649,7 @@ function renderNews(j){
   const dirCls = s.direction || "WAIT";
   let dirTxt = s.direction==="WAIT"||!s.direction ? "TUNGGU" : s.direction;
   if(dirTxt==="TUNGGU" && s.lean) dirTxt = `TUNGGU 5 menit · arah awal ${s.lean}`;
+  if(s.now_window && (s.direction==="BUY"||s.direction==="SELL")) dirTxt = s.direction + " NOW";
   const title = {PRA:"Sinyal sebelum news", RILIS:"Sedang rilis", PASCA:"Sinyal setelah rilis", SELESAI:"Berita selesai"}[s.kind||f.status] || "Sinyal";
   const lv = s.levels ? `<div class="mini"><div><small>Entry</small><b>${px(s.levels.entry)}</b></div><div><small>Stop loss</small><b class="sl">${px(s.levels.stop_loss)}</b></div>
       <div><small>TP1</small><b class="tp">${px(s.levels.tp1)}</b></div><div><small>TP2</small><b class="tp">${px(s.levels.tp2)}</b></div></div>
@@ -753,6 +756,7 @@ async function loadNews(force){
     const r = await fetch("/api/news"+(q.toString()?"?"+q.toString():""),{cache:"no-store"}); const j = await r.json();
     if(my!==seq || cur!=="NEWS") return;
     newsData = j; $("err").hidden = true; renderNews(j);
+    loadMom(my);
     const pr = j.focus && j.focus.progress;
     newsDelay = pr && pr.total && pr.done < pr.total ? (pr.wait_seconds ? Math.min(pr.wait_seconds+2,40)*1000 : 3000) : 30000;
     $("dot").className = "dot"; $("stat").textContent = "diperbarui " + new Date().toLocaleTimeString("id-ID",{...WIB,hour:"2-digit",minute:"2-digit",hour12:false}).replace(".",":") + " WIB";
@@ -809,6 +813,33 @@ function renderM1(s){
   const body = f && f.direction ? fibBoxes(f) : `<div class="card empty">${s.error?"":"Belum ada kaki Fib yang valid di M1 saat ini."}</div>`;
   $("m1view").innerHTML = head + body;
   $("src").textContent = s.source ? "Sumber: " + s.source : "";
+}
+// ---- NEWS MOMENTUM (v19.31): hanya tampil di tab NEWS. Rencana BUY/SELL LIMIT setelah gerakan mendadak (eksperimental)
+const MOMSTATE = {WAIT_PULLBACK:"Menunggu pullback ke zona entry", IN_ZONE:"Harga di zona entry", DEEP:"Pullback dalam: jangan tambah entry", NO_CONFIRM:"Gerakan besar, belum ada konfirmasi berita", CANCELLED:"Batal: impuls gagal"};
+function momCard(sym, r){
+  if(!r || !r.impulse || !MOMSTATE[r.state]) return "";
+  const offv = loadOff(sym), px = x => x==null ? "–" : fmt(offv && !r.native ? x + offv.v : x);
+  const im = r.impulse, d = r.direction, pd = r.plan_direction || im.direction, lv = r.levels, ev = r.evidence || {};
+  const dir = d==="BUY"||d==="SELL";
+  const plan = dir && lv ? `<div class="status-box"><b>${pd==="BUY" ? "BUY LIMIT" : "SELL LIMIT"} ${px(lv.entry)}</b> (zona ${px(r.zone[0])}–${px(r.zone[1])})<br>
+      SL ${px(lv.stop_loss)} · risiko ${fmt(lv.risk_points)} · ${lv.tp.map((x,i)=>"TP"+(i+1)+" "+px(x)).join(" · ")}<br>
+      <span class="mute">Batal bila harga menembus ${px(im.origin)} (awal impuls) atau lewat 90 menit dari puncak. Jangan mengejar harga.</span></div>` : "";
+  const why = (r.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join("");
+  const warn = (r.warnings||[]).map(x=>`<li style="color:var(--wait)">${esc(x)}</li>`).join("");
+  const hl = (r.headlines||[]).slice(0,3).map(h=>`<li>${esc(h.title)} <span class="mute">· ${esc(h.source||"")}</span></li>`).join("");
+  return `<section class="card"><h2>News momentum · ${esc(sym)} · eksperimental</h2>
+    <div><span class="badge ${dir?d:"WAIT"}">${dir?d:"TUNGGU"}</span> <span class="sub" style="margin-left:10px">${esc(MOMSTATE[r.state])}</span></div>
+    <p class="note">Impuls ${esc(im.direction)}: ${fmt(im.leg)} poin (${fmt(im.pct)}%, ${fmt(im.ratio,1)}x ATR M5) dalam ${im.bars*5} menit. Bukti ${ev.n??0}/${ev.of??3}${ev.label?" ("+esc(ev.label)+")":""}.</p>
+    ${plan}<ul class="note" style="padding-left:18px;margin:8px 0">${why}${warn}</ul>
+    ${hl?`<details><summary class="note">Judul berita terkait</summary><ul class="note" style="padding-left:18px">${hl}</ul></details>`:""}
+    <p class="note">Pemicu adalah gerakan harga; berita hanya konfirmasi dan terbit setelah harga bergerak. Belum ada bukti statistik, uji di akun demo dulu. Bukan saran investasi.</p></section>`;
+}
+async function loadMom(my){
+  try{
+    const js = await Promise.all(["XAUUSD","NASDAQ"].map(s=>fetch(`/api/momentum?symbol=${s}`,{cache:"no-store"}).then(r=>r.json())));
+    if(my!==seq || cur!=="NEWS") return;
+    $("momview").innerHTML = js.map(j=>momCard(j.symbol, j.result)).join("");
+  }catch(e){ if(my===seq) $("momview").innerHTML = ""; }
 }
 async function load(){
   if(cur==="NEWS"){ await loadNews(); return; }

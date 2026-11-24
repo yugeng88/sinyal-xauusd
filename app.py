@@ -24,12 +24,13 @@ import news_context
 import news_dates
 import news_intelligence
 import news_log
+import news_momentum
 import news_store
 import notify
 import page
 import signals
 
-VERSION = "19.30"
+VERSION = "19.32"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -710,6 +711,8 @@ def news_view(ev_id=None, now=None, manual=None):
             sig = news.no_direction(sig)               # prediksi arah pra-news dimatikan lewat env
         elif os.getenv("NEWS_REQUIRE_ANALYSIS", "").strip().lower() not in ("off", "0", "no"):
             sig = news_context.gate(sig, analysis, int(os.getenv("NEWS_MIN_ASPECTS", "") or news_context.MIN_ASPECTS))
+        if sig.get("direction") in ("BUY", "SELL") and 0 < -focus["minutes"] <= notify.NOW_MIN and notify.pre_now():
+            sig["now_window"] = True                   # tab NEWS menulis BUY NOW / SELL NOW (hanya bila arah sudah lolos gerbang analisis)
         out_focus["signal"] = sig
     elif focus["status"] in ("RILIS", "PASCA"):
         bar = None if m5 is None else m5[m5["time"] == t0]
@@ -808,6 +811,142 @@ def compute_confirm(sym, tf, a):
                               now=pd.Timestamp.now(tz="UTC"), symbol=sym, tf=tf)
 
 
+# ------------------------------------------------------------------ NEWS MOMENTUM (v19.31)
+_mom = {}        # simbol -> {"res": hasil, "at": epoch}
+MOM_FRESH = 60   # detik: hasil yang lebih baru dari ini dipakai ulang
+
+
+def mom_h1_dir(sym):
+    """Arah tren H1 sederhana (harga > EMA21 > EMA55 = BUY, kebalikannya SELL). None bila data H1 belum ada."""
+    df = raw.get((sym, "H1"))
+    if df is None or len(df) < 60:
+        return None
+    c = df["close"]
+    e21, e55 = signals.ema(c, 21).iloc[-1], signals.ema(c, 55).iloc[-1]
+    p = float(c.iloc[-1])
+    return "BUY" if p > e21 > e55 else "SELL" if p < e21 < e55 else None
+
+
+def mom_candles(sym, fetch=True):
+    """Candle M5 terbaru. Data MT5 sudah masuk lewat /api/mt5; selain itu diambil dengan cache TTL M5."""
+    if fetch and sym not in mt5_alive_map():
+        try:
+            ensure_fresh(sym, "M5")
+        except Exception:  # noqa: BLE001
+            pass
+    return raw.get((sym, "M5"))
+
+
+def mom_fetch_ok(sym, live_mt5):
+    """Cron mengambil M5 sendiri hanya bila M5 memang target notifikasi dan MT5 tidak aktif.
+    Selain itu candle M5 berasal dari MT5 atau dasbor yang sedang dibuka (hemat kuota Twelve Data)."""
+    return sym not in live_mt5 and (sym, "M5") in parse_targets(os.getenv("NOTIFY_TARGETS"))
+
+
+def momentum_compute(sym, ts=None, fetch=True):
+    """Hitung NEWS MOMENTUM untuk satu instrumen (+ konfirmasi lintas aset dan judul berita)."""
+    ts = ts or pd.Timestamp.now(tz="UTC")
+    if not news_momentum.enabled():
+        return {"symbol": sym, "state": "OFF", "direction": "WAIT", "label": "dimatikan (NEWS_MOMENTUM=0)",
+                "reasons": [], "warnings": [], "levels": None, "zone": None}
+    df = mom_candles(sym, fetch)
+    base = news_momentum.detect(df, sym, ts)
+    if not base.get("impulse") or base.get("state") in ("EXPIRED", "CANCELLED"):
+        return _jsonable(base)
+    other = [o for o in SYMS if o != sym]
+    cross = None
+    for o in other:
+        cross = news_momentum.cross_of(news_momentum.detect(mom_candles(o, fetch), o, ts)) or cross
+    got = news_momentum.collect(sym)
+    sent = news_momentum.market_sentiment(sym, got["items"])
+    res = news_momentum.detect(df, sym, ts, cross=cross, sent=sent, h1_dir=mom_h1_dir(sym))
+    res["headlines"] = [{"title": r["title"], "source": r["source"]} for r in got["items"][:4]]
+    res["sentiment"] = sent
+    if got["errors"] and not got["items"]:
+        res["warnings"] = list(res.get("warnings") or []) + ["judul berita tidak bisa diambil; hanya lintas aset yang dipakai"]
+    g = calendar_guard(ts) if res.get("direction") in ("BUY", "SELL") else []
+    if g:
+        res["warnings"] = list(res.get("warnings") or []) + [g[0]["text"]]
+        res["guard"] = True
+    return _jsonable(res)
+
+
+def momentum_get(sym, fetch=True):
+    """Hasil terbaru: memori (60 detik), lalu Redis (diisi cron atau MT5), lalu hitung sendiri."""
+    c = _mom.get(sym)
+    if c and time.time() - c["at"] < MOM_FRESH:
+        return c["res"]
+    raw_v = notify.kv_get(f"mom:{sym}")
+    if raw_v:
+        try:
+            got = json.loads(raw_v)
+            if time.time() - got.get("_at", 0) < 180:
+                _mom[sym] = {"res": got["res"], "at": got["_at"]}
+                return got["res"]
+        except (ValueError, KeyError, TypeError):
+            pass
+    return momentum_run(sym, fetch=fetch)
+
+
+def momentum_run(sym, ts=None, click=None, fetch=True):
+    """Hitung, simpan, lalu kirim notifikasi bila perlu. Dipanggil cron, ingest MT5, dan API."""
+    try:
+        res = momentum_compute(sym, ts, fetch)
+    except Exception as e:  # noqa: BLE001
+        res = {"symbol": sym, "state": "ERROR", "direction": "WAIT", "label": f"galat: {type(e).__name__}",
+               "reasons": [], "warnings": [], "levels": None, "zone": None}
+    res["native"] = sym in mt5_alive_map()
+    at = time.time()
+    _mom[sym] = {"res": res, "at": at}
+    try:
+        notify.kv_set(f"mom:{sym}", json.dumps({"res": res, "_at": at}), ttl=3 * 3600)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        maybe_notify_momentum(sym, res, click)
+    except Exception:  # noqa: BLE001  - notifikasi tidak boleh menggagalkan siklus lain
+        pass
+    return res
+
+
+def maybe_notify_momentum(sym, res, click=None):
+    if not news_momentum.notify_enabled() or not notify.channels() or not res.get("key"):
+        return
+    key, native = res["key"], sym in mt5_alive_map()
+    off = 0.0 if native else notify.offset(sym)
+    label = data.SYMBOLS[sym]["label"]
+    tag = "chart_with_upwards_trend" if res.get("plan_direction") == "BUY" else "chart_with_downwards_trend"
+    if res.get("direction") in ("BUY", "SELL") and not (res.get("guard") and _guard_block()):
+        r = notify.deliver(f"mom:{key}", *notify.momentum_message(label, res, off), 4, [tag, "newspaper"], click or app_url())
+        if r is not None:
+            _sent_log.append({"jenis": "news_momentum", "target": sym, "hasil": r})
+        if res["state"] == "IN_ZONE":
+            r = notify.deliver(f"momz:{key}", *notify.momentum_message(label, res, off, in_zone=True), 5,
+                               [tag, "bell"], click or app_url())
+            if r is not None:
+                _sent_log.append({"jenis": "news_momentum_zona", "target": sym, "hasil": r})
+    elif res.get("state") == "CANCELLED" and notify.seen(f"mom:{key}"):
+        r = notify.deliver(f"momx:{key}", *notify.momentum_cancel_message(label, res), 4, ["x"], click or app_url())
+        if r is not None:
+            _sent_log.append({"jenis": "news_momentum_batal", "target": sym, "hasil": r})
+
+
+@app.get("/api/momentum")
+def api_momentum():
+    sym = (request.args.get("symbol") or SYMS[0]).upper()
+    if sym not in SYMS:
+        return jsonify(error="Instrumen tidak dikenal", symbols=SYMS), 404
+    return jsonify(symbol=sym, now=now().isoformat(), enabled=news_momentum.enabled(),
+                   notify=news_momentum.notify_enabled(), result=momentum_get(sym))
+
+
+def pre_stage(left):
+    """Tahap notifikasi pra-news: '30' (jendela awal), '10' (BUY/SELL NOW), '5' (pengingat terakhir)."""
+    if left <= 5:
+        return "5"
+    return "10" if left <= notify.NOW_MIN and notify.pre_now() else "30"
+
+
 def cron_run(ts=None, click=None):
     """Satu putaran pemeriksaan (dipanggil tiap menit oleh penjadwal luar). Idempotent."""
     ts = ts or pd.Timestamp.now(tz="UTC")
@@ -862,6 +1001,14 @@ def cron_run(ts=None, click=None):
                 r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], click)
                 if r is not None:
                     sent.append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
+    for sym in SYMS:                                   # NEWS MOMENTUM (v19.31); data MT5 sudah masuk lewat /api/mt5
+        try:
+            r = momentum_run(sym, ts, click, fetch=mom_fetch_ok(sym, live_mt5))
+            if r.get("direction") in ("BUY", "SELL"):
+                notes.append(f"{sym} news momentum {r['direction']} ({r['state']})")
+            sent.extend(_drain())
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"news momentum {sym}: {type(e).__name__}")
     extra = news.parse_extra(os.getenv("EXTRA_EVENTS", ""))
     evs = news.build_events(ts.to_pydatetime(), extra)
     pre_min = int(os.getenv("NEWS_PRE_MIN", "") or 60)
@@ -874,9 +1021,9 @@ def cron_run(ts=None, click=None):
             continue
         left = -ev["minutes"]
         if ev["status"] == "PRA" and left <= pre_min:
-            k30, k5, ksig = f"nwr30:{ev['id']}", f"nwr5:{ev['id']}", f"nwp:{ev['id']}"
-            stage = "5" if left <= 5 else "30"
-            if notify.seen(k5 if stage == "5" else k30):
+            kst, ksig = {s_: f"nwr{s_}:{ev['id']}" for s_ in ("30", "10", "5")}, f"nwp:{ev['id']}"
+            stage = pre_stage(left)
+            if notify.seen(kst[stage]):
                 continue
             v = news_view(ev["id"], now=ts)["focus"]
             if stage == "30" and v["study"].get("n", 0) < 3 and v["progress"]["done"] < v["progress"]["total"] and left > 6:
@@ -890,7 +1037,7 @@ def cron_run(ts=None, click=None):
             if an and an["fusion"]["bias"] in ("BUY", "SELL"):          # bias pra-news dicatat agar akurasinya terukur
                 news_log.record(ev, {"kind": "BIAS", "direction": an["fusion"]["bias"], "confidence": an["fusion"]["confidence"]}, ts)
             title, msg = notify.news_pre_message(ev, s, left, off, analysis=an)
-            claim = k5 if stage == "5" else k30
+            claim = kst[stage]
             r = notify.deliver(claim, title, msg, 4 if directional else 3,
                                ["chart_with_upwards_trend" if directional else "bell"], click)
             if r is not None:
@@ -1241,6 +1388,12 @@ def mt5_ingest(j):
             r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], app_url())
             if r is not None:
                 out["sent"].append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
+    for sym in alive:                                   # NEWS MOMENTUM (v19.31) dari candle M5 broker
+        try:
+            momentum_run(sym, fetch=False)
+            out["sent"].extend(_drain())
+        except Exception as e:  # noqa: BLE001
+            out["notes"].append(f"news momentum {sym}: {type(e).__name__}")
     out["alive"] = sorted(alive)
     return out
 
