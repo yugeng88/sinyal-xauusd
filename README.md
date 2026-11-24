@@ -7,6 +7,26 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
+## Yang baru di v19.33: hasil uji mesin sinyal pada data asli, tanpa perubahan perilaku
+
+Perilaku aplikasi sama dengan v19.32 (mesin sinyal, level, notifikasi, tab NEWS tidak diubah). Yang bertambah: alat uji `backtest.py`
+yang sudah divalidasi, dan hasil uji pada candle MT5 XAUUSD-STDc (M15: 12 Mar 2024 - 24 Nov 2026, 63.968 bar; M5: 27 Jun 2025 - 24 Nov 2026, 100.000 bar).
+
+- Mesin bawaan XAUUSD M15 (1.982 sinyal): SL 35%, TP1 atau lebih 12%, tanpa hasil 52%. R rata-rata +0,005 setelah biaya 0,25 poin (+0,033 sebelum biaya); sinyal acak dengan proporsi BUY/SELL dan jarak SL sama: -0,034. M5 (2.908 sinyal): -0,030.
+- RR rendah, satu keluarga strategi, filter ADX, sesi, EMA200, kedaluwarsa 24 candle: tidak ada yang lolos ambang p terkoreksi (0,005) sekaligus positif di paruh awal dan akhir.
+- Tiga ide yang ditetapkan sebelum melihat hasil (`python backtest.py ... --ideas`): A tanpa lonjakan volatilitas, B entry limit pullback 0,5 ATR, C searah tren H1. Tidak ada yang lolos di M15 dan M5. C (searah tren H1) paling menjanjikan: +0,047 R di M15 (p 0,010) dan -0,003 di M5 (p 0,086), tetapi paruh awal negatif di keduanya. Belum cukup untuk mengubah mesin.
+- Langkah berikut yang jujur: uji maju. Ekspor ulang data setelah 2-3 bulan dan jalankan ide C pada data yang BELUM pernah dilihat.
+- Opsi `--utc-offset ny` untuk server broker berjam tutup New York (GMT+2 musim dingin, GMT+3 musim panas AS), dan pembanding acak kini menjaga proporsi BUY/SELL agar tren pasar tidak dianggap keahlian.
+
+## Alat uji `backtest.py` (tidak mengubah perilaku aplikasi)
+
+Menjalankan mesin sinyal aplikasi pada candle MT5 sungguhan dan membandingkannya dengan sinyal ACAK yang berjumlah dan berjarak SL sama.
+`python backtest.py XAUUSD_M15.csv --tf M15 --utc-offset ny --spread 0.25` (tambahkan `--ideas` untuk 3 ide perbaikan). Ekspor data: MT5 > View > Symbols (Ctrl+U) > tab Bars > pilih simbol, timeframe, rentang tanggal > Request > Export Bars.
+
+- 10 skenario: bawaan, 3 dari 3 keluarga, satu keluarga saja (reversal / continuation / breakout), filter tren EMA200, ADX 20, sesi, RR 1/1.5/2, kedaluwarsa 24 candle.
+- Hasil dibagi dua menurut waktu (awal dan akhir) dan diberi p-value terhadap sinyal acak. Layak dipertimbangkan hanya bila R positif di kedua bagian dan p di bawah ambang terkoreksi.
+- Diuji: format ekspor MT5, kesetiaan terhadap `signals.track`, laju positif palsu pada random walk (3% pada p<0,05), dan edge yang sengaja ditanam terdeteksi.
+
 ## Yang baru di v19.32: BUY NOW / SELL NOW 10 dan 5 menit sebelum berita terjadwal (hanya tab NEWS dan notifikasi news)
 
 - Notifikasi pra-news sekarang ada tiga tahap: jendela awal (60 menit), **10 menit**, dan **5 menit** sebelum rilis. Pada tahap 10 dan 5 menit, bila arah BUY/SELL ada, judulnya memuat **BUY NOW** atau **SELL NOW**; kartu sinyal di tab NEWS juga bertuliskan sama.
