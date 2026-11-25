@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.38 FILTER TREN H1 + AI HANYA NEWS, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.39 NEWS TANPA GERBANG H1 + FILTER H1 + AI HANYA NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -26,6 +26,13 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 - Konfirmasi M1 tetap berjalan, tetapi hanya sebagai informasi ("M1 terkonfirmasi (info)", dengan pesan jangan entri dua kali).
 - Bawaan tidak berubah (`REQUIRE_M1=1`): entry baru diumumkan setelah M1 terkonfirmasi. `SETUP_ALERT=1` tetap memberi peringatan setup sebelum M1.
 - Batasan jujur: ini membuat sinyal lebih CEPAT, bukan lebih untung. Backtest (entry di penutupan candle, tanpa M1) menunjukkan SL sekitar 35% dan R rata-rata sekitar nol, jadi mempercepat entry tidak diharapkan mengubah hasil. Efek konfirmasi M1 belum teruji karena belum ada data M1.
+
+## Yang baru di v19.39: sinyal NEWS tidak lagi wajib searah tren H1
+
+- **Perubahan (`news_intelligence.py`):** sebelumnya BUY/SELL di panel "Analisis dampak makro" hanya terbit bila tren H1 searah bias makro. Sekarang arah ditentukan oleh data rilis (Actual vs Forecast). Tren H1 menjadi konteks: bila berlawanan, hasil tetap terbit tetapi ditandai **kontra-tren** (`counter_trend`, `h1_status`) dengan catatan risiko lebih tinggi. Tanpa Actual hasilnya tetap WAIT; NFP/RETAIL untuk NASDAQ tetap MIXED/WAIT.
+- **Mengembalikan gerbang lama untuk jenis tertentu:** env `NEWS_H1_GATE`, mis. `NEWS_H1_GATE=CPI,PCE` (bawaan kosong).
+- Modul momentum NEWS dan bias gabungan tidak berubah (keduanya sudah memperlakukan H1 sebagai bukti tambahan, bukan syarat).
+- **Belum diuji:** perubahan ini memperbanyak sinyal NEWS, dan tidak ada backtest yang menunjukkan entri kontra-tren setelah rilis lebih baik atau lebih buruk. Pantau akurasinya lewat log NEWS sebelum mempercayainya.
 
 ## Yang baru di v19.38 (gabungan v19.36 + v19.37 + filter H1)
 
