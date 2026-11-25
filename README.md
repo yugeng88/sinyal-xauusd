@@ -7,6 +7,26 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 > Bukan saran investasi. Sinyal adalah kecenderungan dari data, bukan prediksi atau jaminan. Uji di akun demo dulu.
 
 
+## Yang baru di v19.36: seed riwayat harga dari MT5 untuk tab NEWS
+
+- Studi reaksi berita kini memakai candle M5 dari MT5 Anda (`mt5_seed_xauusd_m5.csv.gz`, 100.000 candle, 27 Jun 2025 sampai 24 Nov 2026, sudah dalam UTC) untuk setiap tanggal rilis yang jendelanya tercakup penuh. Tidak butuh kuota Twelve Data dan tidak lagi macet di "31 dari 60" untuk tanggal dalam cakupan.
+- Aturan aman: tidak menimpa hasil ukur yang sudah tersimpan; tanggal di luar cakupan (lebih lama dari Juni 2025) tetap diminta ke penyedia data; tanggal yang datanya tipis dilewati, bukan ditandai gagal. Bila file tidak ada atau rusak, perilaku sama seperti v19.35.
+- Pengujian pada data Anda: 12 kejadian PCE terukur dari MT5; 33 dari 36 arah (5m, 15m, 60m) sama dengan angka Twelve Data, selisih rata-rata 1,6 poin.
+- Memperbarui seed: ekspor M5 baru dari MT5, lalu `python mt5_seed.py build XAUUSD-STDc_M5.csv --utc-offset ny`. Untuk cakupan lebih panjang, ekspor M5 dengan tanggal awal lebih lama.
+- `NEWS_SEED=0` mematikan; `NEWS_SEED_FILE` mengganti jalur file. Tab XAUUSD, NASDAQ, mesin sinyal, dan notifikasi tidak berubah.
+
+## Yang baru di v19.35: panel mesin strategi ringkas (tampilan saja)
+
+- Panel "V19 Advanced Strategy Engine" di tab XAUUSD dan NASDAQ kini satu baris: status (SINYAL/TUNGGU), jumlah keluarga yang searah, dan alasan belum ada sinyal (butuh 2 keluarga searah, ADX di bawah batas, volatilitas belum melebar). Tujuh kotak setup dilipat di balik "Detail 7 setup".
+- Mesin sinyal TIDAK berubah. `ADX_MIN = 10` hanya dijadikan konstanta bernama dan dikirim ke halaman. Backtest 1-3 keluarga: satu keluarga saja lebih buruk daripada aturan 2 dari 3 (lihat bagian v19.33).
+
+## Yang baru di v19.34: mode SNIPER (sinyal segera, tanpa menunggu konfirmasi M1)
+
+- Pasang `REQUIRE_M1=0` (di environment Vercel atau `.env` VPS) untuk mode SNIPER. Notifikasi sinyal dikirim begitu candle TF tutup (sekali per sinyal) dengan Entry (limit di harga itu, atau market bila harga masih dekat), SL, TP, dan **batas waktu entry** (2 candle TF). Judulnya memuat "SNIPER"; teks lama "Tunggu konfirmasi M1" tidak muncul.
+- Konfirmasi M1 tetap berjalan, tetapi hanya sebagai informasi ("M1 terkonfirmasi (info)", dengan pesan jangan entri dua kali).
+- Bawaan tidak berubah (`REQUIRE_M1=1`): entry baru diumumkan setelah M1 terkonfirmasi. `SETUP_ALERT=1` tetap memberi peringatan setup sebelum M1.
+- Batasan jujur: ini membuat sinyal lebih CEPAT, bukan lebih untung. Backtest (entry di penutupan candle, tanpa M1) menunjukkan SL sekitar 35% dan R rata-rata sekitar nol, jadi mempercepat entry tidak diharapkan mengubah hasil. Efek konfirmasi M1 belum teruji karena belum ada data M1.
+
 ## Yang baru di v19.33: hasil uji mesin sinyal pada data asli, tanpa perubahan perilaku
 
 Perilaku aplikasi sama dengan v19.32 (mesin sinyal, level, notifikasi, tab NEWS tidak diubah). Yang bertambah: alat uji `backtest.py`
@@ -15,6 +35,8 @@ yang sudah divalidasi, dan hasil uji pada candle MT5 XAUUSD-STDc (M15: 12 Mar 20
 - Mesin bawaan XAUUSD M15 (1.982 sinyal): SL 35%, TP1 atau lebih 12%, tanpa hasil 52%. R rata-rata +0,005 setelah biaya 0,25 poin (+0,033 sebelum biaya); sinyal acak dengan proporsi BUY/SELL dan jarak SL sama: -0,034. M5 (2.908 sinyal): -0,030.
 - RR rendah, satu keluarga strategi, filter ADX, sesi, EMA200, kedaluwarsa 24 candle: tidak ada yang lolos ambang p terkoreksi (0,005) sekaligus positif di paruh awal dan akhir.
 - Tiga ide yang ditetapkan sebelum melihat hasil (`python backtest.py ... --ideas`): A tanpa lonjakan volatilitas, B entry limit pullback 0,5 ATR, C searah tren H1. Tidak ada yang lolos di M15 dan M5. C (searah tren H1) paling menjanjikan: +0,047 R di M15 (p 0,010) dan -0,003 di M5 (p 0,086), tetapi paruh awal negatif di keduanya. Belum cukup untuk mengubah mesin.
+- Walk-forward (`--walkforward`: pilih skenario terbaik dari data sebelumnya, nilai pada blok berikutnya yang belum terlihat): M15 +0,032 R per sinyal (t=0,9), M5 -0,042 R (t=-1,7). Tidak ada cara memilih strategi yang untung secara meyakinkan di data baru. Ide C terpilih di 3 blok terakhir M15 dan positif di ketiganya, tetapi tidak di M5.
+- Patch audit konfirmasi M1 (`signals.py`, `confirm_m1`): setup berstatus INVALID bila high/low candle M1 tertutup SEJAK sinyal terbit pernah menyentuh SL (sebelumnya hanya close terakhir), dan INVALID kini diprioritaskan di atas CONFIRMED. Selaras dengan aturan riwayat/backtest (menyentuh SL = kena SL). Tes tambahan: wick BUY dan SELL, tepat di SL, wick sebelum sinyal diabaikan. Perlu diketahui: high M1 adalah harga Bid, jadi untuk SELL sentuhan SL oleh Ask (Bid + spread) belum tertangkap.
 - Langkah berikut yang jujur: uji maju. Ekspor ulang data setelah 2-3 bulan dan jalankan ide C pada data yang BELUM pernah dilihat.
 - Opsi `--utc-offset ny` untuk server broker berjam tutup New York (GMT+2 musim dingin, GMT+3 musim panas AS), dan pembanding acak kini menjaga proporsi BUY/SELL agar tren pasar tidak dianggap keahlian.
 

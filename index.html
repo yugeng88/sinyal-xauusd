@@ -198,7 +198,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
     <tbody id="hist"></tbody></table>
   </section>
   <div class="status"><span><i class="dot" id="dot"></i><span id="stat">menghubungkan…</span></span><span id="src"></span></div>
-  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.33 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
+  <p class="disc">Bukan saran investasi. Trading berisiko. Level dihitung dari ATR dan indikator, bukan prediksi harga.<br>Versi 19.36 NEWS + FIB · dual-instrument: 7 setup / 3 keluarga strategi + filter VWAP/ADX/ATR + konfirmasi M1 wajib + proteksi entry terlambat + risiko terpisah + sinyal news BUY/SELL · data langsung dari MT5 (EA) + notifikasi</p>
 </main>
 
 <script>
@@ -309,6 +309,26 @@ function fibBox(f){
     return `<div class="note-box${live?" fib-live"+(f.status==="IN_ZONE"?" inzone":""):""}" style="margin-top:12px">${inner}</div>`; }
   return `<details class="note-box" style="margin-top:12px"><summary class="sub"><b>Fib ${esc(f.direction)} (${esc(f.leg.draw_label||f.leg.draw)})</b> · ${st.t} <small>(tidak aktif, ketuk untuk detail)</small></summary><div style="margin-top:8px">${inner}</div></details>`;
 }
+function engineBox(se){
+  if(!se) return "";
+  const fam = se.families||{}, ctx = se.context||{};
+  const min = se.minimum_votes||2, total = Object.keys(fam).length||3;
+  const names = side => Object.entries(fam).filter(([k,v])=>v===side).map(([k])=>k);
+  const buy = names("BUY"), sell = names("SELL");
+  const lead = buy.length>=sell.length ? ["BUY",buy] : ["SELL",sell];
+  const n = lead[1].length, ok = se.status==="CONFIRMED";
+  const adxMin = ctx.adx_min ?? 10, why = [];
+  if(n < min) why.push(`butuh ${min} keluarga searah`);
+  if(ctx.adx!=null && ctx.adx < adxMin) why.push(`ADX ${esc(ctx.adx)} di bawah ${esc(adxMin)}`);
+  if(ctx.volatility_expansion===false) why.push("volatilitas belum melebar");
+  const head = ok ? `${esc(lead[0])} · ${esc(se.votes)}/${total} keluarga searah`
+    : (n ? `Baru ${esc(lead[0])} ${n}/${total} keluarga (${esc(lead[1].join(", "))})` : "Belum ada keluarga yang memberi arah");
+  const detail = `<div class="grid" style="margin-top:8px">${Object.entries(se.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${['BUY','SELL','WAIT'].includes(side)?side:''}">${esc(side)}</b></div>`).join("")}</div>
+    <div class="sub" style="margin-top:8px">Keluarga: ${Object.entries(fam).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(" · ")} · VWAP ${esc(ctx.vwap??"–")} · ADX ${esc(ctx.adx??"–")}. Minimal ${min} keluarga berbeda harus searah; tujuh setup digabung agar setup sekeluarga tidak dihitung berulang.</div>`;
+  return `<div class="note-box" style="margin-top:12px"><b>Mesin strategi · ${ok?"SINYAL":"TUNGGU"}</b>
+    <div class="sub">${head}${!ok && why.length ? " · belum karena: "+why.join("; ") : ""}</div>
+    <details><summary class="sub" style="cursor:pointer">Detail 7 setup</summary>${detail}</details></div>`;
+}
 function fibBoxes(fib){
   if(!fib) return "";
   const list = [fib, fib.alt].filter(Boolean);
@@ -359,7 +379,7 @@ function render(s){
     <div style="margin-top:14px"><div class="row"><span>Tingkat keyakinan${A?" (saat terbit)":""}</span><b>${conf}%</b></div>
     <div class="bar" role="progressbar" aria-valuenow="${conf}" aria-valuemin="0" aria-valuemax="100"><div style="width:${conf}%"></div></div>
     <p class="note">Keselarasan strategi${A?" (saat terbit)":""}, bukan peluang profit.</p></div>
-    ${sig.strategy_engine?`<div class="note-box" style="margin-top:12px"><b>V19 Advanced Strategy Engine · ${esc(sig.strategy_engine.votes)}/3 keluarga</b><div class="sub">Minimal 2 keluarga berbeda harus searah. Tujuh setup digabung agar setup dalam keluarga yang sama tidak dihitung berulang.</div><div class="grid" style="margin-top:8px">${Object.entries(sig.strategy_engine.strategies||{}).map(([name,side])=>`<div class="cell"><small>${esc(name)}</small><b class="${['BUY','SELL','WAIT'].includes(side)?side:''}">${esc(side)}</b></div>`).join("")}</div><div class="sub" style="margin-top:8px">Keluarga: ${Object.entries(sig.strategy_engine.families||{}).map(([k,v])=>`${esc(k)} ${esc(v)}`).join(" · ")} · VWAP ${esc(sig.strategy_engine.context?.vwap??"–")} · ADX ${esc(sig.strategy_engine.context?.adx??"–")}</div></div>`:""}
+    ${engineBox(sig.strategy_engine)}
     ${fibBoxes(sig.fib)}${fibTfBox(s.fib_tfs)}`;
   $("sumcard").hidden = false; $("summary").textContent = s.summary || "";
   $("warn").hidden = !sig.warnings.length; $("warn").textContent = sig.warnings.join(" · ");

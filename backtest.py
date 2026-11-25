@@ -328,6 +328,55 @@ def build_ideas(df, symbol):
     ]
 
 
+def walk_forward(df, symbol, scenarios, cost=0.0, blocks=6, min_trades=30):
+    """Pilih skenario terbaik dari data SEBELUMNYA, lalu nilai pada blok berikutnya yang belum terlihat.
+    Menjawab: 'adakah cara memilih strategi yang untung di data baru?' Mengembalikan ringkasan keluar-sampel."""
+    n = len(df)
+    edges = np.linspace(START, n, blocks + 1).astype(int)
+    per = {}
+    for sc in scenarios:
+        name, ar, rr, expiry = sc[:4]
+        pb = sc[4] if len(sc) > 4 else None
+        tr = simulate(df, ar, symbol, rr=rr, expiry=expiry, cost=cost, pullback=pb)
+        per[name] = np.array([(t["i"], t["r"]) for t in tr]).reshape(-1, 2)
+
+    def window(name, a, b):
+        x = per[name]
+        return x[(x[:, 0] >= a) & (x[:, 0] < b), 1]
+
+    rows, oos, ref_all, ref_base = [], [], [], []
+    base_name = next(iter(per))
+    for b in range(1, blocks):
+        train = {k: window(k, edges[0], edges[b]) for k in per}
+        ok = {k: v.mean() for k, v in train.items() if len(v) >= min_trades}
+        if not ok:
+            continue
+        pick = max(ok, key=ok.get)
+        test = window(pick, edges[b], edges[b + 1])
+        oos.extend(test.tolist())
+        ref_base.extend(window(base_name, edges[b], edges[b + 1]).tolist())
+        ref_all.append(np.mean([window(k, edges[b], edges[b + 1]).mean() for k in per if len(window(k, edges[b], edges[b + 1]))]))
+        rows.append({"block": b, "pick": pick, "train_r": float(ok[pick]), "oos_n": len(test),
+                     "oos_r": float(test.mean()) if len(test) else float("nan")})
+    oos = np.array(oos)
+    se = float(oos.std(ddof=1) / np.sqrt(len(oos))) if len(oos) > 1 else float("nan")
+    return {"rows": rows, "oos_n": len(oos), "oos_r": float(oos.mean()) if len(oos) else float("nan"), "se": se,
+            "t": float(oos.mean() / se) if se and se == se else float("nan"),
+            "base_r": float(np.mean(ref_base)) if ref_base else float("nan"),
+            "avg_scenario_r": float(np.mean(ref_all)) if ref_all else float("nan")}
+
+
+def report_wf(res, tf, symbol, cost):
+    lines = [f"WALK-FORWARD {symbol} {tf} (biaya {cost} poin): pilih skenario terbaik dari data sebelumnya, nilai pada blok berikutnya.",
+             f"{'Blok':>4} {'Skenario terpilih':36} {'R latih':>8} {'n uji':>6} {'R uji':>7}"]
+    for r in res["rows"]:
+        lines.append(f"{r['block']:>4} {r['pick']:36} {r['train_r']:>8.3f} {r['oos_n']:>6} {r['oos_r']:>7.3f}")
+    lines.append(f"Keluar-sampel gabungan: n={res['oos_n']}, R rata-rata {res['oos_r']:+.3f} (SE {res['se']:.3f}, t={res['t']:.1f}). "
+                 f"Pembanding: bawaan aplikasi {res['base_r']:+.3f}, rata-rata semua skenario {res['avg_scenario_r']:+.3f}.")
+    lines.append("t di bawah 2 berarti tidak bisa dibedakan dari nol. Hasil positif yang nyata biasanya t di atas 3 setelah banyak pilihan.")
+    return "\n".join(lines)
+
+
 def report(rows, n_candles, tf, symbol, cost):
     k = len(rows)
     lines = [f"{symbol} {tf}: {n_candles} candle, spread/biaya {cost} poin, {k} skenario dibandingkan dengan sinyal acak.",
@@ -351,11 +400,16 @@ def main(argv=None):
     ap.add_argument("--spread", type=float, default=0.0, help="biaya per trade dalam poin harga (spread + slippage)")
     ap.add_argument("--split", type=float, default=0.5)
     ap.add_argument("--draws", type=int, default=300)
+    ap.add_argument("--walkforward", action="store_true", help="pilih skenario dari data sebelumnya, uji pada blok berikutnya")
     ap.add_argument("--ideas", action="store_true", help="uji 3 ide perbaikan (A volatilitas, B pullback, C tren H1) saja")
     a = ap.parse_args(argv)
     df = load_candles(a.csv, a.utc_offset)
     if len(df) < 600:
         sys.exit(f"Candle terlalu sedikit ({len(df)}); butuh minimal 600, idealnya beberapa ribu.")
+    if a.walkforward:
+        sc = build_scenarios(df, a.symbol) + [x for x in build_ideas(df, a.symbol) if not x[0].startswith("Bawaan")]
+        print(report_wf(walk_forward(df, a.symbol, sc, a.spread), a.tf, a.symbol, a.spread))
+        return
     scen = build_ideas(df, a.symbol) if a.ideas else None
     print(report(run(df, a.symbol, a.spread, a.split, a.draws, scen), len(df), a.tf, a.symbol, a.spread))
 

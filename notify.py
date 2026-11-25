@@ -287,22 +287,34 @@ def wib(iso):
     return f"{DAYS[t.weekday()]} {t.day} {MONTHS[t.month - 1]} {t:%H:%M} WIB"
 
 
-def signal_message(label, tf, a, off=0.0):
+def signal_message(label, tf, a, off=0.0, sniper=False, until=None):
+    """Sinyal baru. sniper=True (REQUIRE_M1=0): tanpa menunggu konfirmasi M1; until = batas waktu entry (ISO UTC)."""
     lv = a["levels"]
     tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
-    return (f"{label} {tf} · {a['direction']}",
-            f"Sinyal baru (keyakinan {a['confidence']}%) · candle {tf} ditutup {hm(a['time_close'])}\n"
-            f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)}\n{tps}\n"
-            "Tunggu konfirmasi M1 sebelum masuk. Bukan saran investasi.")
+    if not sniper:
+        return (f"{label} {tf} · {a['direction']}",
+                f"Sinyal baru (keyakinan {a['confidence']}%) · candle {tf} ditutup {hm(a['time_close'])}\n"
+                f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)}\n{tps}\n"
+                "Tunggu konfirmasi M1 sebelum masuk. Bukan saran investasi.")
+    order = "BUY" if a["direction"] == "BUY" else "SELL"
+    valid = f"\nBerlaku sampai {hm(until)}; lewat itu lewati setup ini." if until else ""
+    return (f"{label} {tf} · {order} SNIPER",
+            f"SNIPER (tanpa menunggu M1) · candle {tf} ditutup {hm(a['time_close'])}\n"
+            f"Entry {fp(lv['entry'], off)} (limit di harga ini, atau market bila harga masih dekat) | SL {fp(lv['stop_loss'], off)}\n{tps}"
+            f"{valid}\nBatal bila harga menyentuh SL. Jangan mengejar harga yang sudah menjauh. Bukan saran investasi.")
 
 
-def confirm_message(label, tf, a, c, off=0.0, warn=None):
+def confirm_message(label, tf, a, c, off=0.0, warn=None, info_only=False):
+    """ENTRY SIAP setelah M1 terkonfirmasi. info_only=True (mode SNIPER): hanya informasi, sinyal SNIPER sudah dikirim."""
     lv = c.get("live_levels") or a["levels"]
     since = f"\nPertama terkonfirmasi {c['first_time'][11:16]} UTC di sekitar {fp(c['first_price'], off)}." if c.get("first_time") else ""
     tps = " | ".join(f"TP{i + 1} {fp(x, off)}" for i, x in enumerate(lv["tp"]))
     left = f"\nBatas waktu entry sisa {c['minutes_left']:.0f} menit." if c.get("minutes_left") is not None else ""
-    return (f"{label} {tf} · {a['direction']} ENTRY SIAP (M1 terkonfirmasi)",
-            f"Harga M1 {fp(c['price'], off)} (di zona entry, {c.get('chase_r', 0):+.2f}R dari entry sinyal).\n"
+    title = (f"{label} {tf} · {a['direction']} M1 terkonfirmasi (info)" if info_only
+             else f"{label} {tf} · {a['direction']} ENTRY SIAP (M1 terkonfirmasi)")
+    note = "Hanya informasi: sinyal SNIPER sudah dikirim, jangan entri dua kali.\n" if info_only else ""
+    return (title,
+            note + f"Harga M1 {fp(c['price'], off)} (di zona entry, {c.get('chase_r', 0):+.2f}R dari entry sinyal).\n"
             f"Entry {fp(lv['entry'], off)} | SL {fp(lv['stop_loss'], off)} | risiko {lv['risk_points']:.2f}\n{tps}{left}{since}\n"
             + (f"⚠ {warn}\n" if warn else "") + "Jangan mengejar jika harga sudah menjauh. Bukan saran investasi.")
 

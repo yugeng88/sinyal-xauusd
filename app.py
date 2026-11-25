@@ -24,13 +24,14 @@ import news_context
 import news_dates
 import news_intelligence
 import news_log
+import mt5_seed
 import news_momentum
 import news_store
 import notify
 import page
 import signals
 
-VERSION = "19.33"
+VERSION = "19.36"
 # v18: entry hanya diumumkan setelah konfirmasi M1. REQUIRE_M1=0 mengembalikan notifikasi "sinyal baru" lama;
 # SETUP_ALERT=1 tetap mengirim peringatan setup saat candle TF tutup (sebelum M1).
 REQUIRE_M1 = os.getenv("REQUIRE_M1", "1").strip() != "0"
@@ -270,7 +271,9 @@ def maybe_notify_signal(sym, tf, sig, click=None):
     if not a or sig.get("market_closed") or a["age_hours"] * 60 > max(3 * tf_minutes(tf), 15):
         return None
     off = 0.0 if sig.get("broker_native") else notify.offset(sym)       # harga MT5 sudah harga broker
-    title, msg = notify.signal_message(sig["label"], tf, a, off)
+    sniper = not REQUIRE_M1                                             # v19.34: REQUIRE_M1=0 = mode SNIPER (tanpa tunggu M1)
+    dl = signals.entry_deadline(pd.Timestamp(a["time_close"]), tf, sym) if sniper else None
+    title, msg = notify.signal_message(sig["label"], tf, a, off, sniper=sniper, until=dl.isoformat() if dl is not None else None)
     tag = "chart_with_upwards_trend" if a["direction"] == "BUY" else "chart_with_downwards_trend"
     r = notify.deliver(f"sig:{sym}:{tf}:{a['time']}", title, msg, 4, [tag], click or app_url())
     if r is not None:
@@ -646,6 +649,7 @@ def history_sync(typ, now_dt):
         news.set_extra_past(typ, news_dates.fred_dates(typ, int(since)))
     dates = news.past_dates(typ, now_dt)
     fam = news.TYPES[typ]["family"]
+    mt5_seed.inject(fam, dates)                               # v19.36: jendela M5 dari MT5 untuk tanggal yang tercakup
     per_min = 60 if os.getenv("OANDA_TOKEN", "").strip() else int(os.getenv("NEWS_CALLS_PER_MIN", "7"))
     stored = news_store.rows(typ)                             # hasil ukur yang sudah tersimpan permanen
     prog = news.ensure_windows(fam, dates, lambda a, b: data.get_range("XAUUSD", "M5", a, b), per_minute=per_min,
@@ -997,7 +1001,7 @@ def cron_run(ts=None, click=None):
                 notes.append(f"{sym}:{tf} ENTRY SIAP ditahan: {g[0]['text'][:80]}")
             elif c and c.get("state") == "CONFIRMED":
                 title, msg = notify.confirm_message(sig["label"], tf, a, c, notify.offset(sym),
-                                                    warn=g[0]["text"] if g else None)
+                                                    warn=g[0]["text"] if g else None, info_only=not REQUIRE_M1)
                 r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], click)
                 if r is not None:
                     sent.append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})
@@ -1384,7 +1388,8 @@ def mt5_ingest(j):
         if c.get("state") == "CONFIRMED" and not notify.seen(ck) and g and _guard_block():
             pass                                          # NEWS_GUARD_BLOCK=1: tahan notifikasi entry di sekitar berita
         elif c.get("state") == "CONFIRMED" and not notify.seen(ck):
-            title, msg = notify.confirm_message(sig["label"], tf, a, c, 0.0, warn=g[0]["text"] if g else None)
+            title, msg = notify.confirm_message(sig["label"], tf, a, c, 0.0, warn=g[0]["text"] if g else None,
+                                                info_only=not REQUIRE_M1)
             r = notify.deliver(ck, title, msg, 5, ["white_check_mark"], app_url())
             if r is not None:
                 out["sent"].append({"jenis": "konfirmasi_m1", "target": f"{sym}:{tf}", "hasil": r})

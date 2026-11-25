@@ -14,6 +14,7 @@ ATR_MULT = float(os.getenv("ATR_MULT", "1.5"))     # jarak SL = ATR14 x ini
 RR_LEVELS = (2.0, 3.0, 4.0)                         # TP1, TP2, TP3
 MAX_SCORE = 5
 SPIKE_PCT = float(os.getenv("SPIKE_PCT", "2.0"))    # per candle H1; diskalakan untuk TF lain
+ADX_MIN = 10   # filter konteks mesin strategi (v19.35: konstanta bernama; nilai tidak berubah)
 COOLDOWN_BARS = int(os.getenv("COOLDOWN_BARS", "4"))  # jeda setelah SL sebelum sinyal arah sama
 ZONE_R = float(os.getenv("ZONE_R", "0.5"))          # batas "mengejar" harga: 0,5 x jarak SL
 CONSENSUS_SYMBOLS = ("XAUUSD", "NASDAQ")            # instrumen yang memakai mesin 3-strategi
@@ -257,7 +258,7 @@ def strategy_arrays(df):
     atr_base = a.rolling(20, min_periods=10).median()
     vol_expansion = a >= atr_base * 0.70
     vwap_up, vwap_dn = c >= vwap, c <= vwap
-    context_ok = (adx_v >= 10) & vol_expansion
+    context_ok = (adx_v >= ADX_MIN) & vol_expansion
 
     buy_n = np.sum(np.column_stack(list(fam_buy.values())), axis=1)
     sell_n = np.sum(np.column_stack(list(fam_sell.values())), axis=1)
@@ -356,7 +357,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
         strategy_engine = {"name": "V19 Advanced Strategy Engine", "minimum_votes": 2,
                            "votes": votes, "families": family_status, "strategies": strategy_status,
                            "context": {"vwap": round(float(ctx["vwap"][-1]), 2),
-                                       "adx": round(float(ctx["adx"][-1]), 1),
+                                       "adx": round(float(ctx["adx"][-1]), 1), "adx_min": ADX_MIN,
                                        "volatility_expansion": bool(ctx["volatility_expansion"][-1])},
                            "status": "CONFIRMED" if direction != "WAIT" else "WAIT"}
         if direction == "WAIT":
@@ -678,8 +679,18 @@ def confirm_m1(m1, direction, levels, issued_close, now=None, symbol="XAUUSD", t
     now_ok = bool(flag.iloc[-1]) and bool(after[-1]) and not late
     px = float(c.iloc[-1])
     chase_r = (px - entry) * sign / risk if risk else 0.0
-    broken = (px - sl) * sign <= 0
-    state = ("CONFIRMED" if now_ok else "INVALID" if broken else "LATE" if late
+    # Setup batal bila ekstrem candle M1 yang sudah tertutup setelah sinyal
+    # pernah menyentuh SL, meskipun candle tersebut kemudian ditutup kembali
+    # di sisi aman. Memeriksa close saja dapat menghidupkan kembali setup yang
+    # secara intrabar sebenarnya sudah invalid.
+    post_signal = closed.loc[after]
+    if post_signal.empty:
+        broken = (px - sl) * sign <= 0
+    elif direction == "BUY":
+        broken = bool((post_signal["low"] <= sl).any())
+    else:
+        broken = bool((post_signal["high"] >= sl).any())
+    state = ("INVALID" if broken else "CONFIRMED" if now_ok else "LATE" if late
              else "CHASED" if chase_r > zone_r else "WAIT")
     up = "atas" if direction == "BUY" else "bawah"
     e9v, e21v, rv = float(e9.iloc[-1]), float(e21.iloc[-1]), float(r.iloc[-1])
@@ -697,12 +708,14 @@ def confirm_m1(m1, direction, levels, issued_close, now=None, symbol="XAUUSD", t
          "detail": f"{px:.2f}; SL {sl:.2f}; batas kejar {limit:.2f}",
          "parts": [{"label": "Harga", "v": px, "price": True}, {"label": "SL", "v": sl, "price": True},
                    {"label": "Batas kejar", "v": limit, "price": True}]},
+        {"name": "Ekstrem candle M1 sejak sinyal belum menyentuh SL", "ok": not broken,
+         "detail": "Tidak ada sentuhan SL" if not broken else "SL pernah tersentuh intrabar"},
     ]
     if dl is not None:
         checks.append({"name": f"Masih dalam batas waktu entry ({prof['max_age_bars']} candle {tf})",
                        "ok": not late, "detail": f"sampai {dl.strftime('%H:%M')} UTC"})
     reasons = {
-        "INVALID": "Harga sudah menyentuh stop loss sinyal. Setup batal, jangan entry.",
+        "INVALID": "Harga sempat menyentuh stop loss sinyal (termasuk wick M1). Setup batal, jangan entry.",
         "LATE": "Batas waktu entry sudah lewat. Lewati setup ini dan tunggu sinyal baru.",
         "CHASED": f"Harga sudah bergerak {chase_r:.2f}R dari entry sinyal (batas {zone_r:g}R). Jangan mengejar.",
     }
