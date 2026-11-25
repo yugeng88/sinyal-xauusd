@@ -20,6 +20,43 @@ ZONE_R = float(os.getenv("ZONE_R", "0.5"))          # batas "mengejar" harga: 0,
 CONSENSUS_SYMBOLS = ("XAUUSD", "NASDAQ")            # instrumen yang memakai mesin 3-strategi
 
 
+# ------------------------------------------------ filter tren H1 (v19.38, "Ide C" di backtest.py)
+# Hasil uji data MT5 XAUUSD M15 (1.982 -> 1.111 sinyal): R rata-rata +0,005 -> +0,047, p 0,010.
+# Belum lolos uji maju; paruh awal data masih sedikit negatif. Matikan: H1_FILTER=0.
+def _env_list(name, default):
+    return {x.strip().upper() for x in os.getenv(name, default).split(",") if x.strip()}
+
+
+def use_h1_filter(symbol, tf):
+    """True bila sinyal pada (symbol, tf) hanya boleh searah tren H1 (EMA20 > EMA50 pada H1 tertutup)."""
+    if os.getenv("H1_FILTER", "1").strip().lower() in ("0", "off", "false", "no"):
+        return False
+    return (str(symbol).upper() in _env_list("H1_FILTER_SYMBOLS", "XAUUSD")
+            and str(tf).upper() in _env_list("H1_FILTER_TFS", "M15"))
+
+
+def h1_trend_array(df):
+    """Tren H1 untuk SETIAP candle: +1 (EMA20 > EMA50), -1 (sebaliknya), 0 (belum ada H1 tertutup).
+
+    H1 dibentuk dari close candle yang sama (resample 1 jam). Hanya candle H1 yang SUDAH TERTUTUP pada
+    saat candle sinyal tertutup yang dipakai, jadi tidak ada data masa depan. Sama persis dengan Ide C
+    di backtest.py. Dengan kurang dari 50 candle H1, EMA50 belum matang: hasilnya 0 (filter dilewati).
+    """
+    t = df["time"].dt.tz_convert("UTC")
+    n = len(df)
+    if n < 2:
+        return np.zeros(n, dtype=int)
+    step = pd.Series(t).diff().median()
+    h1 = df["close"].astype(float).set_axis(pd.DatetimeIndex(t)).resample("1h").last().dropna()
+    if len(h1) < 50:
+        return np.zeros(n, dtype=int)
+    h1_dir = np.where(ema(h1, 20) > ema(h1, 50), 1, -1)
+    h1_done = (h1.index + pd.Timedelta(hours=1)).tz_localize(None).to_numpy().astype("datetime64[ns]")
+    close_t = (t + step).dt.tz_localize(None).to_numpy().astype("datetime64[ns]")
+    pos = np.searchsorted(h1_done, close_t, side="right") - 1
+    return np.where(pos >= 0, h1_dir[np.clip(pos, 0, None)], 0)
+
+
 # ------------------------------------------------ profil risiko per instrumen (v18)
 # Nilai awal (bisa diubah lewat env, mis. ATR_MULT_NASDAQ=2.0). Env khusus instrumen menang atas env umum
 # (ATR_MULT), lalu default di bawah. Default NASDAQ lebih lebar karena indeks lebih berisik dan sering gap;
@@ -162,7 +199,7 @@ def _adx(df, n=14):
     return dx.ewm(alpha=1 / n, adjust=False).mean().fillna(0)
 
 
-def strategy_arrays(df):
+def strategy_arrays(df, h1_filter=False):
     """V19 Advanced Strategy Engine: 7 detector, 3 keluarga suara.
 
     Satu keluarga maksimal satu suara agar setup yang berkorelasi tidak dihitung
@@ -265,6 +302,12 @@ def strategy_arrays(df):
     raw_buy = (buy_n >= 2) & vwap_up.to_numpy() & context_ok.to_numpy()
     raw_sell = (sell_n >= 2) & vwap_dn.to_numpy() & context_ok.to_numpy()
     direction = np.where(raw_buy & ~raw_sell, "BUY", np.where(raw_sell & ~raw_buy, "SELL", "WAIT"))
+    h1_blocked = np.zeros(len(direction), dtype=bool)
+    if h1_filter:
+        trend = h1_trend_array(df)
+        aligned = ((direction == "BUY") & (trend >= 0)) | ((direction == "SELL") & (trend <= 0))
+        h1_blocked = (direction != "WAIT") & ~aligned       # trend 0 (H1 belum matang) = lolos
+        direction = np.where(h1_blocked, "WAIT", direction)
     count = np.where(direction == "BUY", buy_n, np.where(direction == "SELL", sell_n, 0))
     swing_lo, swing_hi = l.rolling(8, min_periods=1).min(), h.rolling(8, min_periods=1).max()
     stop_dist = np.where(direction == "BUY", (c - swing_lo).to_numpy(),
@@ -277,7 +320,7 @@ def strategy_arrays(df):
         "direction": direction, "stop_dist": stop_dist,
         "confidence": np.where(count == 3, 90, np.where(count == 2, 70, 0)).astype(int),
         "votes": count.astype(int), "strategies": detector_status,
-        "families": family_status,
+        "families": family_status, "h1_blocked": h1_blocked,
         "context": {"vwap": vwap.to_numpy(), "adx": adx_v.to_numpy(),
                     "volatility_expansion": vol_expansion.to_numpy()},
     }
@@ -340,7 +383,7 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
     strategy_engine = None
     struct = None
     if symbol in CONSENSUS_SYMBOLS:
-        strat = strategy_arrays(df)
+        strat = strategy_arrays(df, h1_filter=use_h1_filter(symbol, tf))
         struct = float(strat["stop_dist"][-1])
         direction = str(strat["direction"][-1])
         conf = int(strat["confidence"][-1])
@@ -360,7 +403,9 @@ def analyze(df, source="", symbol="XAUUSD", label=None, note=None, tf="H1",
                                        "adx": round(float(ctx["adx"][-1]), 1), "adx_min": ADX_MIN,
                                        "volatility_expansion": bool(ctx["volatility_expansion"][-1])},
                            "status": "CONFIRMED" if direction != "WAIT" else "WAIT"}
-        if direction == "WAIT":
+        if bool(strat["h1_blocked"][-1]):
+            reasons.append("Setup ada, tetapi melawan tren H1 (EMA20/EMA50 H1) sehingga ditahan. Hasil uji: sinyal searah tren H1 lebih baik.")
+        elif direction == "WAIT":
             reasons.append("Konfirmasi belum mencapai minimal 2 dari 3 keluarga strategi, atau filter konteks VWAP/volatilitas belum mendukung.")
         else:
             agreeing = [name for name, side in strategy_status.items() if side == direction]
@@ -457,7 +502,7 @@ def summary_text(sig):
 
 
 # ------------------------------------------------- sinyal untuk semua candle
-def issue_arrays(df, symbol="XAUUSD"):
+def issue_arrays(df, symbol="XAUUSD", tf=None):
     """Arah, keyakinan, harga, dan ATR untuk SETIAP candle sekaligus.
 
     EMA/RSI/ATR bersifat kausal (adjust=False), jadi nilainya di candle i sama
@@ -476,7 +521,7 @@ def issue_arrays(df, symbol="XAUUSD"):
                  + np.where(chg > 0.5, 1, np.where(chg < -0.5, -1, 0)))
     stop = np.full(len(cv), np.nan)
     if symbol in CONSENSUS_SYMBOLS:
-        strat = strategy_arrays(df)
+        strat = strategy_arrays(df, h1_filter=bool(tf) and use_h1_filter(symbol, tf))
         direction, conf, stop = strat["direction"], strat["confidence"], strat["stop_dist"]
     else:
         direction = np.where(score >= 3, "BUY", np.where(score <= -3, "SELL", "WAIT"))
@@ -486,8 +531,8 @@ def issue_arrays(df, symbol="XAUUSD"):
     return {"direction": direction, "conf": conf, "price": cv, "atr": a, "stop": stop}
 
 
-def _issue_from_arrays(closed, symbol="XAUUSD"):
-    ar = issue_arrays(closed, symbol=symbol)
+def _issue_from_arrays(closed, symbol="XAUUSD", tf=None):
+    ar = issue_arrays(closed, symbol=symbol, tf=tf)
 
     def fn(i):
         d = str(ar["direction"][i])
@@ -529,7 +574,7 @@ def track(df, tf="H1", expiry_hours=None, now=None, issue_fn=None, cooldown_bars
     cooldown = COOLDOWN_BARS if cooldown_bars is None else cooldown_bars
     now = now or pd.Timestamp.now(tz="UTC")
     closed, forming = split_closed(df, now, minutes)
-    issue_fn = issue_fn or _issue_from_arrays(closed, symbol=symbol)
+    issue_fn = issue_fn or _issue_from_arrays(closed, symbol=symbol, tf=tf)
     n = len(closed)
     start = min(119, max(n - 1, 0))
     blocked = {"BUY": -10 ** 9, "SELL": -10 ** 9}

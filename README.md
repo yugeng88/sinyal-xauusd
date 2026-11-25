@@ -1,4 +1,4 @@
-# Sinyal XAUUSD & NASDAQ (v19.26 NEWS + FIB + SPREAD, dual-instrument)
+# Sinyal XAUUSD & NASDAQ (v19.38 FILTER TREN H1 + AI HANYA NEWS, dual-instrument)
 
 Aplikasi web (Flask, jalan di Vercel) yang menampilkan sinyal BUY/SELL untuk XAUUSD dan NASDAQ,
 radar berita ekonomi AS (CPI, PPI, NFP, FOMC, PCE), dan notifikasi lewat ntfy/Telegram.
@@ -26,6 +26,17 @@ Data harga bisa datang langsung dari MT5 lewat EA `SinyalMT5.mq5` (lihat `PANDUA
 - Konfirmasi M1 tetap berjalan, tetapi hanya sebagai informasi ("M1 terkonfirmasi (info)", dengan pesan jangan entri dua kali).
 - Bawaan tidak berubah (`REQUIRE_M1=1`): entry baru diumumkan setelah M1 terkonfirmasi. `SETUP_ALERT=1` tetap memberi peringatan setup sebelum M1.
 - Batasan jujur: ini membuat sinyal lebih CEPAT, bukan lebih untung. Backtest (entry di penutupan candle, tanpa M1) menunjukkan SL sekitar 35% dan R rata-rata sekitar nol, jadi mempercepat entry tidak diharapkan mengubah hasil. Efek konfirmasi M1 belum teruji karena belum ada data M1.
+
+## Yang baru di v19.38 (gabungan v19.36 + v19.37 + filter H1)
+
+- **Filter tren H1 untuk XAUUSD M15** (`signals.py`): sinyal hanya diterbitkan searah tren H1 (EMA20 > EMA50 pada candle H1 yang sudah tertutup). Itu "Ide C" di `backtest.py --ideas`. Hasil uji data MT5 XAUUSD M15 (63.968 bar): sinyal 1.982 -> 1.111, R rata-rata setelah biaya +0,005 -> +0,047, p 0,010 (ambang 0,0167); paruh akhir +0,101R, paruh awal -0,008R. **Belum terbukti:** rentang 95% kasar sekitar -0,01 s.d. +0,11R, dan hasil per tahun mesin bawaan tidak konsisten. Wajib uji maju di demo 2-3 bulan sebelum uang nyata.
+  - Cakupan: `H1_FILTER_SYMBOLS` (bawaan `XAUUSD`) dan `H1_FILTER_TFS` (bawaan `M15`). `H1_FILTER=0` mengembalikan perilaku sebelumnya. M5, M30, H1, dan NASDAQ tidak berubah.
+  - Bila setup ada tetapi melawan tren H1, kartu menampilkan WAIT dengan alasan "melawan tren H1". Pelacakan dan notifikasi memakai aturan yang sama.
+  - Kurang dari 50 candle H1 tersedia (JumlahBar EA kecil): filter dilewati agar sinyal tidak terblokir total.
+  - Jangan masukkan `XAUUSD:M5` ke `NOTIFY_TARGETS` (uji M5 negatif di semua skenario).
+- **Kunci API hanya untuk NEWS** (`app.py`): ringkasan narasi sinyal lewat Claude kini mati bawaan (`CLAUDE_NARRATIVE=1` untuk menyalakan). `ANTHROPIC_API_KEY` hanya dipakai Analisis AI tab NEWS (sekitar US$0,005 per panggilan, cache 15 menit).
+- Tes baru: `tests/test_h1_filter.py`, `tests/test_narrative_off.py`. Total 341 tes lolos.
+- Bukan saran investasi. Mesin ini belum terbukti menguntungkan.
 
 ## Yang baru di v19.33: hasil uji mesin sinyal pada data asli, tanpa perubahan perilaku
 
@@ -216,7 +227,7 @@ Sebelum sinyal entry news keluar, aplikasi mengumpulkan enam aspek lalu menggabu
 3. **Angka rilis** (Forecast, Previous, Actual) dari kalender Forex Factory.
 4. **Berita terkini**: judul 3 hari terakhir dari RSS Google News (tanpa kunci), tentang jenis berita dan harga emas.
 5. **Sentimen judul**: kamus frasa sederhana dari sudut pandang emas (tanpa penanganan negasi, jadi hanya satu aspek).
-6. **Analisis AI** (opsional): isi env `ANTHROPIC_API_KEY` (dan `NEWS_AI_MODEL`, bawaan `claude-sonnet-5-5`; `NEWS_AI_TIMEOUT` detik, bawaan 6). Judul berita dikirim sebagai data, bukan instruksi, keyakinan AI dibatasi 70%, hasil di-cache 15 menit. Tanpa kunci, aspek ini dilewati.
+6. **Analisis AI** (opsional): isi env `ANTHROPIC_API_KEY` (dan `NEWS_AI_MODEL`, bawaan `claude-sonnet-5-5`; `NEWS_AI_TIMEOUT` detik, bawaan 6). Judul berita dikirim sebagai data, bukan instruksi, keyakinan AI dibatasi 70%, hasil di-cache 15 menit. Tanpa kunci, aspek ini dilewati. **v19.37:** kunci ini HANYA dipakai Analisis AI di tab NEWS (sekitar US$0,005 per panggilan, di-cache 15 menit). Ringkasan narasi sinyal lewat Claude kini mati bawaan; nyalakan dengan `CLAUDE_NARRATIVE=1` (boros: satu panggilan per candle baru per instrumen/timeframe).
 
 Aturan penggabungan:
 - Bias gabungan baru ada bila minimal **3 aspek** terkumpul dan **2 searah**; keyakinan dikali kelengkapan data dan dibatasi 65%.

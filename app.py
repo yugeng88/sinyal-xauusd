@@ -67,7 +67,11 @@ def ttl_seconds(tf):
 
 
 def claude_narrative(sig):
-    """Opsional: Claude menulis ulang angka yang SUDAH dihitung. Gagal -> None."""
+    """Opsional: Claude menulis ulang angka yang SUDAH dihitung. Gagal -> None.
+    v19.37: MATI secara bawaan agar ANTHROPIC_API_KEY hanya dipakai Analisis AI di tab NEWS (hemat biaya).
+    Nyalakan lagi dengan CLAUDE_NARRATIVE=1."""
+    if os.getenv("CLAUDE_NARRATIVE", "0").strip().lower() not in ("1", "on", "true", "yes"):
+        return None
     key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return None
